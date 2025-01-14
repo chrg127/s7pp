@@ -164,7 +164,7 @@ concept OutputType = std::is_same_v<T, s7_pointer>
                   || std::is_same_v<T, List>;
 
 template <typename T>
-std::string_view type_to_string()
+const char * type_to_string()
 {
          if constexpr(std::is_same_v<T, s7_pointer>) { return "s7_pointer"; }
     else if constexpr(std::is_same_v<T, double>) { return "real"; }
@@ -451,6 +451,12 @@ struct s7 {
         return s7_make_signature(sc, sizeof...(Args) + 1, sig_type<R>(), sig_type<Args>()...);
     }
 
+    template <typename C, typename R, typename... Args>
+    s7_pointer make_signature(R (C::*)(Args...))
+    {
+        return s7_make_signature(sc, sizeof...(Args) + 1, sig_type<R>(), sig_type<Args>()...);
+    }
+
     /* calling functions */
     template <typename... T>
     s7_pointer call(std::string_view name, T&&... args)
@@ -490,8 +496,8 @@ struct s7 {
             if (first_wrong_type != bools.end()) {
                 auto i = first_wrong_type - bools.begin();
                 arglist = List(args);
-                auto types = std::array { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
+                // auto types = std::array<const char *> { type_to_string<Args>()... };
+                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], "bye");
             }
 
             auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
@@ -547,8 +553,8 @@ struct s7 {
             if (first_wrong_type != bools.end()) {
                 auto i = first_wrong_type - bools.begin();
                 arglist = List(args);
-                auto types = std::array { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
+                // auto types = std::array<const char *> { type_to_string<Args>()... };
+                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], "bye");
             }
 
             auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
@@ -568,15 +574,13 @@ struct s7 {
     }
 
     template <typename L, typename R, typename... Args>
-    s7_function make_f(L &&, R (L::*)(Args...) const)
+    s7_function make_f(R (L::*)(Args...) const)
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             auto name = std::string_view("caller");
             auto fn = detail::LambdaTable<L>::lambda;
             auto &scheme = *reinterpret_cast<s7 *>(sc);
-
-            args = s7_cddr(args);
 
             auto arglist = List(args);
             std::array<s7_pointer, NumArgs> arr;
@@ -585,21 +589,69 @@ struct s7 {
             }
 
             auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return std::array { scheme.is<Args>(arr[Is])... };
+                return std::array<bool, NumArgs> { scheme.is<Args>(arr[Is])... };
             }(std::make_index_sequence<NumArgs>());
             auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
 
             if (first_wrong_type != bools.end()) {
                 auto i = first_wrong_type - bools.begin();
                 arglist = List(args);
-                auto types = std::array { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
+                auto types = std::array<const char *, NumArgs> { type_to_string<Args>()... };
+                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i]);
             }
 
-            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return fn(scheme.to<Args>(arr[Is])...);
+            if constexpr(std::is_same_v<R, void>) {
+                [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    fn(scheme.to<Args>(arr[Is])...);
+                }(std::make_index_sequence<NumArgs>());
+                return s7_undefined(sc);
+            } else {
+                auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    return fn(scheme.to<Args>(arr[Is])...);
+                }(std::make_index_sequence<NumArgs>());
+                return scheme.from<R>(res);
+            }
+        };
+    }
+
+    template <typename L, typename R, typename... Args>
+    s7_function make_f(R (L::*)(Args...))
+    {
+        constexpr auto NumArgs = FunctionTraits<L>::arity;
+        return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            auto name = std::string_view("caller");
+            auto fn = detail::LambdaTable<L>::lambda;
+            auto &scheme = *reinterpret_cast<s7 *>(sc);
+
+            auto arglist = List(args);
+            std::array<s7_pointer, NumArgs> arr;
+            for (std::size_t i = 0; i < NumArgs; i++) {
+                arr[i] = arglist.advance();
+            }
+
+            auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return std::array<bool, NumArgs> { scheme.is<Args>(arr[Is])... };
             }(std::make_index_sequence<NumArgs>());
-            return scheme.from<R>(res);
+            auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
+
+            if (first_wrong_type != bools.end()) {
+                auto i = first_wrong_type - bools.begin();
+                arglist = List(args);
+                auto types = std::array<const char *, NumArgs> { type_to_string<Args>()... };
+                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i]);
+            }
+
+            if constexpr(std::is_same_v<R, void>) {
+                [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    fn(scheme.to<Args>(arr[Is])...);
+                }(std::make_index_sequence<NumArgs>());
+                return s7_undefined(sc);
+            } else {
+                auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    return fn(scheme.to<Args>(arr[Is])...);
+                }(std::make_index_sequence<NumArgs>());
+                return scheme.from<R>(res);
+            }
         };
     }
 
@@ -607,10 +659,10 @@ struct s7 {
     s7_pointer define_function(std::string_view name, std::string_view doc, L&& lambda)
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
-        detail::LambdaTable<L>::lambda = lambda;
-        auto f = make_f(std::forward<L>(lambda), &L::operator());
+        detail::LambdaTable<std::remove_cvref_t<L>>::lambda = lambda;
+        auto f = make_f(&std::remove_cvref_t<L>::operator());
         auto let = s7_sublet(sc, s7_rootlet(sc), s7_nil(sc));
-        auto p = s7_make_typed_function_with_environment(sc, name.data(), f, NumArgs, 0, false, doc.data(), make_signature(&L::operator()), let);
+        auto p = s7_make_typed_function_with_environment(sc, name.data(), f, NumArgs, 0, false, doc.data(), make_signature(&std::remove_cvref_t<L>::operator()), let);
         s7_define_variable(sc, name.data(), p);
         return p;
     }

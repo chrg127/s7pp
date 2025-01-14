@@ -10,7 +10,7 @@ void test_scheme_defined_function()
     scheme["an-integer"] = 1;
     scheme.eval("(define (add1 a) (+ a 1))");
     auto x = scheme["an-integer"].as_opt<int64_t>();
-    printf("%ld\n", x.value());
+    printf("%lld\n", x.value());
     printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as<int64_t>()).c_str());
     scheme["an-integer"] = 32;
     printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as_opt<int64_t>().value()).c_str());
@@ -158,8 +158,20 @@ void test_define_function()
     // scheme.define_function("do-stuff", "doc", do_stuff);
 
     int64_t x = 0;
-    scheme.define_function("inc", "doc", [&](int64_t y) -> s7_pointer { x += y; return scheme.from(1); });
-    scheme.define_function("get", "doc", [&](int64_t) -> int64_t { return x; });
+    scheme.define_function("inc", "doc", [&]() -> void { x++; });
+    scheme.define_function("get", "doc", [&]() -> int64_t { return x; });
+
+    auto f = [i = 0]() mutable -> int64_t {
+        i++;
+        printf("i = %d\n", i);
+        return i;
+    };
+    f();
+    f();
+    f();
+
+    scheme.define_function("inc2", "doc", f);
+
     scheme.repl();
 }
 
