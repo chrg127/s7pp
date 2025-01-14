@@ -393,18 +393,13 @@ struct s7 {
         return s7_call(sc, s7_name_to_value(sc, name.data()), this->list(args...).ptr());
     }
 
-    s7_pointer define_function(std::string_view name, s7_function func, s7_int required_args, s7_int optional_args, bool rest_arg, std::string_view doc = "")
-    {
-        return s7_define_function(sc, name.data(), func, required_args, optional_args, rest_arg, doc.data());
-    }
-
-    s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, s7_pointer (*fptr)(s7_scheme *sc, s7_pointer args))
+    s7_pointer define_function(std::string_view name, std::string_view doc, s7_pointer (*fptr)(s7_scheme *sc, s7_pointer args))
     {
         return s7_define_function(sc, name.data(), fptr, 0, 0, true, doc.data());
     }
 
     template <typename R, typename... Args>
-    s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, R (*fptr)(Args...))
+    s7_pointer define_function(std::string_view name, std::string_view doc, R (*fptr)(Args...))
     {
         constexpr auto NumArgs = sizeof...(Args);
 
@@ -449,7 +444,7 @@ struct s7 {
     }
 
     template <typename R, typename... Args>
-    s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, R (*fptr)(s7_scheme *, Args...))
+    s7_pointer define_function(std::string_view name, std::string_view doc, R (*fptr)(s7_scheme *, Args...))
     {
         constexpr auto NumArgs = sizeof...(Args);
 
@@ -507,7 +502,7 @@ struct s7 {
             };
             auto ctor_name = std::string("make-") + std::string(name);
             auto doc = std::string("(") + ctor_name + ") creates a new " + std::string(name);
-            this->define_function(ctor_name.c_str(), ctor, 0, 0, false, doc.c_str());
+            s7_define_function(sc, ctor_name.c_str(), ctor, 0, 0, false, doc.c_str());
         }
 
         if constexpr(requires(T t) { t.gc_mark(*this); }) {
@@ -565,7 +560,7 @@ struct s7 {
             auto &scheme = *reinterpret_cast<s7 *>(&sc);
             return scheme.from<bool>(scheme.is<T>(s7_car(args)));
         };
-        this->define_function(is_name.c_str(), is, 0, 0, false, is_doc.c_str());
+        s7_define_function(sc, is_name.c_str(), is, 0, 0, false, is_doc.c_str());
     }
 
     std::optional<size_t> type_tag_of(std::string_view name)

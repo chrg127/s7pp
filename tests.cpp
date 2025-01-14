@@ -16,14 +16,14 @@ void test_scheme_defined_function()
     int64_t res = scheme.to<int64_t>(scheme.call("add1", 2));
     printf("%s\n", std::format("(add1 2): {}", res).c_str());
 
-    scheme.define_function("test-sym", [](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
+    scheme.define_function("test-sym", "test symbols", [](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
         auto &scheme = *reinterpret_cast<s7::s7 *>(&sc);
         auto args = s7::List(_args);
         auto sym = s7_symbol_table_find_name(scheme.sc, scheme.to<const char *>(args[0]));
         printf("%p\n", static_cast<void *>(sym));
         printf("%s\n", scheme.to_string(sym).data());
         return scheme.undefined();
-    }, 1, 0, false, "test symbols");
+    });
 
     scheme.repl();
 }
@@ -58,7 +58,7 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
 void test_c_defined_function()
 {
     s7::s7 scheme;
-    scheme.define_function("add1", add1, 1, 0, false, "(add1 int): adds 1 to int");
+    scheme.define_function("add1", "(add1 int): adds 1 to int", add1);
     scheme.define("my-pi", 3.14159265);
     scheme.repl();
 }
@@ -149,12 +149,12 @@ s7_pointer do_stuff(s7_scheme *sc, int64_t x)
 void test_define_function()
 {
     s7::s7 scheme;
-    scheme.define_fun_from_ptr("add-double", "doc", add_double);
-    scheme.define_fun_from_ptr("add-int", "doc", add_int);
-    scheme.define_fun_from_ptr("str-test", "doc", print_append);
-    scheme.define_fun_from_ptr("index-of-vec", "doc", find);
-    scheme.define_fun_from_ptr("add1", "doc", add1);
-    scheme.define_fun_from_ptr("do-stuff", "doc", do_stuff);
+    scheme.define_function("add-double", "doc", add_double);
+    scheme.define_function("add-int", "doc", add_int);
+    scheme.define_function("str-test", "doc", print_append);
+    scheme.define_function("index-of-vec", "doc", find);
+    scheme.define_function("add1", "doc", add1);
+    scheme.define_function("do-stuff", "doc", do_stuff);
     scheme.repl();
 }
 
@@ -162,7 +162,7 @@ void test_set()
 {
     s7::s7 scheme;
     scheme.make_c_type<Set>("set");
-    scheme.define_fun_from_ptr("set-add!", "(set-add! set value) adds value to set", set_add);
+    scheme.define_function("set-add!", "(set-add! set value) adds value to set", set_add);
     scheme.repl();
 }
 
