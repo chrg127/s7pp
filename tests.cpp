@@ -80,6 +80,9 @@ struct Set {
     explicit Set(s7_scheme *sc)
         : set(std::unordered_set<s7_pointer, s7::Hash, s7::Equal>(512, s7::Hash(sc), s7::Equal(sc))) {}
 
+    Set(const Set &) = delete;
+    Set & operator=(const Set &) = delete;
+
     void gc_mark(s7::s7 &scheme)
     {
         for (s7_pointer value : set) {
@@ -96,6 +99,8 @@ struct Set {
         str += ")>";
         return str;
     }
+
+    void add(s7_pointer p) { this->set.insert(p); }
 };
 
 template <typename T>
@@ -111,9 +116,9 @@ bool operator==(const Set &a, const Set &b)
     return a.set.size() == b.set.size() && is_subset(a.set, b.set);
 }
 
-s7_pointer set_add(Set set, s7_pointer arg)
+s7_pointer set_add(Set &set, s7_pointer arg)
 {
-    set.set.insert(arg);
+    set.add(arg);
     return arg;
 }
 

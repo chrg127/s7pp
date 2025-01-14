@@ -228,7 +228,7 @@ struct s7 {
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return s7_is_byte_vector(p); }
         else if constexpr(std::is_pointer_v<T>) { return s7_is_c_pointer(p); }
         else if constexpr(std::is_same_v<T, List>) { return s7_is_pair(p); }
-        return s7_is_c_object(p) && s7_c_object_type(p) == TypeTag<T>::tag;
+        return s7_is_c_object(p) && s7_c_object_type(p) == TypeTag<std::remove_cvref_t<T>>::tag;
     }
 
     template <typename T>
@@ -248,7 +248,7 @@ struct s7 {
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return std::span(s7_byte_vector_elements(p), s7_vector_length(p)); }
         else if constexpr(std::is_pointer_v<T>) { return s7_c_pointer(p); }
         else if constexpr(std::is_same_v<T, List>) { return List(p); }
-        else { return *reinterpret_cast<T *>(s7_c_object_value(p)); }
+        else { return *reinterpret_cast<std::remove_cvref_t<T> *>(s7_c_object_value(p)); }
     }
 
     template <typename T>
@@ -367,7 +367,7 @@ struct s7 {
     template <typename R, typename... Args>
     s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, R (*fptr)(Args...))
     {
-        constexpr auto num_args = sizeof...(Args);
+        constexpr auto NumArgs = sizeof...(Args);
 
         auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             auto &scheme = *reinterpret_cast<s7 *>(s7_integer(s7_car(args)));
@@ -375,12 +375,13 @@ struct s7 {
             auto name = std::string_view(s7_string(s7_caddr(args)));
             auto arglist = List(s7_cdddr(args));
 
-            // using this construct to get all arguments into optionals can be a source of
-            // problems: make sure evaluation order is consistently left to right everywhere
-            auto opts = std::tuple { scheme.to_opt<Args>(arglist.advance())... };
-            auto bools = std::apply([](auto &&...the_args) {
-                return std::array { the_args.has_value()... };
-            }, opts);
+            std::array<s7_pointer, NumArgs> arr;
+            for (std::size_t i = 0; i < NumArgs; i++) {
+                arr[i] = arglist.advance();
+            }
+            auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return std::array { scheme.is<Args>(arr[Is])... };
+            }(std::make_index_sequence<NumArgs>());
             auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
 
             if (first_wrong_type != bools.end()) {
@@ -389,13 +390,15 @@ struct s7 {
                 auto types = std::array { type_to_string<Args>()... };
                 return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
             }
-            auto vals = std::apply([](auto &&...args) { return std::make_tuple(args.value()...); }, opts);
-            auto res  = std::apply(fn, vals);
+
+            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return fn(scheme.to<Args>(arr[Is])...);
+            }(std::make_index_sequence<NumArgs>());
             return scheme.from<R>(res);
         };
 
         auto private_name = std::format("__cpp:{}", name);
-        s7_define_function(sc, private_name.c_str(), f, num_args+3, 0, false, doc.data());
+        s7_define_function(sc, private_name.c_str(), f, NumArgs+3, 0, false, doc.data());
 
         auto eval_str = std::format(
             "(let ((self {}) (fn {}) (name \"{}\")) "
