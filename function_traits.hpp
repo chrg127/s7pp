@@ -13,6 +13,7 @@ struct FunctionTraits<R(*)(Args...)> : public FunctionTraits<R(Args...)>
 template <typename R, typename... Args>
 struct FunctionTraits<R(Args...)> {
     using ReturnType = R;
+    using FunSig = R(Args...);
 
     static constexpr std::size_t arity = sizeof...(Args);
 
@@ -37,10 +38,10 @@ struct FunctionTraits<R(C::*)()> : public FunctionTraits<R(C&)> {};
 
 // functor
 template <typename F>
-class FunctionTraits {
+struct FunctionTraits {
     using CallType = FunctionTraits<decltype(&F::operator())>;
-public:
     using ReturnType = typename CallType::ReturnType;
+    using FunSig = CallType::FunSig;
 
     static constexpr std::size_t arity = CallType::arity - 1;
 
