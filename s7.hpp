@@ -33,7 +33,7 @@ struct Hash {
 
 template <typename T>
 struct TypeTag {
-    static inline int tag = -1;
+    static inline s7_int tag = -1;
 };
 
 class List {
@@ -53,8 +53,7 @@ public:
 
     s7_pointer car() const { return s7_car(p); }
     List cdr() const { return List(s7_cdr(p)); }
-    const s7_pointer ptr() const { return p; }
-    s7_pointer ptr() { return p; }
+    s7_pointer ptr() const { return p; }
 
     s7_pointer advance() { auto tmp = s7_car(p); p = s7_cdr(p); return tmp; }
 
@@ -84,31 +83,27 @@ public:
 
 bool operator==(const List::iterator &a, const List::iterator &b)
 {
-    return (a.p == nullptr || !s7_is_pair(a.p)) && (b.p == nullptr || !s7_is_pair(b.p))
+    return ((a.p == nullptr || !s7_is_pair(a.p)) && (b.p == nullptr || !s7_is_pair(b.p)))
         || (a.p != nullptr && b.p != nullptr && s7_is_eq(a.p, b.p));
 }
 
 struct Variable;
 
-// TODO: get rid of int, short, long, float and std::string?
+// TODO: get rid of std::string?
+// should we add is_rational, is_ratio and is_complex?
 template <typename T>
 concept InputType = std::is_same_v<T, s7_pointer>
                  || std::is_same_v<T, bool>
                  || std::is_same_v<T, s7_int>
-                 || std::is_same_v<T, int>
-                 || std::is_same_v<T, short>
-                 || std::is_same_v<T, long>
-                 || std::is_same_v<T, float>
                  || std::is_same_v<T, double>
                  || std::is_same_v<T, const char *>
-                 || std::is_same_v<std::remove_cvref_t<T>, std::string>
                  || std::is_same_v<T, std::string_view>
                  || std::is_same_v<T, char>                     // character
                  || std::is_same_v<T, std::span<s7_pointer>>    // generic vector
                  || std::is_same_v<T, std::span<s7_int>>        // int vector
                  || std::is_same_v<T, std::span<double>>        // float vector
                  || std::is_same_v<T, std::span<uint8_t>>       // byte vector
-                 || std::is_same_v<T, std::is_pointer<T>>       // c-pointer
+                 || std::is_pointer_v<T>                        // c-pointer
                  || std::is_same_v<T, List>;
 
 template <typename T>
@@ -153,15 +148,13 @@ std::string_view type_to_string()
                    || std::is_same_v<T, long>) { return "integer"; }
     else if constexpr(std::is_same_v<T, double>) { return "real"; }
     else if constexpr(std::is_same_v<T, const char *>
-                   || std::is_same_v<std::remove_cvref_t<T>, std::string>
                    || std::is_same_v<T, std::string_view>) { return "string"; }
     else if constexpr(std::is_same_v<T, unsigned char>) { return "character"; }
     else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return "vector"; }
     else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return "int-vector"; }
     else if constexpr(std::is_same_v<T, std::span<double>>) { return "float-vector"; }
     else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return "byte-vector"; }
-    else if constexpr(std::is_null_pointer_v<T>) { return "nil"; }
-    else if constexpr(std::is_same_v<T, std::is_pointer<T>>) { return "c-pointer"; }
+    else if constexpr(std::is_pointer_v<T>) { return "c-pointer"; }
     else if constexpr(std::is_same_v<T, List>) { return "list"; }
     else { return "?"; }
 }
@@ -222,165 +215,113 @@ struct s7 {
     template <typename T>
     bool is(s7_pointer p)
     {
-        if constexpr(std::is_same_v<T, s7_pointer>) {
-            return p;
-        } else if constexpr(std::is_same_v<T, bool>) {
-            return s7_is_boolean(p);
-        } else if constexpr(std::is_same_v<T, s7_int>
-                  || std::is_same_v<T, int>
-                  || std::is_same_v<T, short>
-                  || std::is_same_v<T, long>) {
-            return s7_is_integer(p);
-        } else if constexpr(std::is_same_v<T, double>
-                         || std::is_same_v<T, float>) {
-            return s7_is_real(p);
-        } else if constexpr(std::is_same_v<T, const char *>
-                         || std::is_same_v<std::remove_cvref_t<T>, std::string>
-                         || std::is_same_v<T, std::string_view>) {
-            return s7_is_string(p);
-        } else if constexpr(std::is_same_v<T, unsigned char>) {
-            return s7_is_character(p);
-        } else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) {
-            return s7_is_vector(p);
-        } else if constexpr(std::is_same_v<T, std::span<int>>) {
-            return s7_is_int_vector(p);
-        } else if constexpr(std::is_same_v<T, std::span<double>>) {
-            return s7_is_float_vector(p);
-        } else if constexpr(std::is_same_v<T, std::span<uint8_t>>) {
-            return s7_is_byte_vector(p);
-        } else if constexpr(std::is_null_pointer_v<T>) {
-            return s7_is_null(sc, p);
-        } else if constexpr(std::is_pointer_v<T>) {
-            return s7_is_c_pointer(p);
-        } else if constexpr(std::is_same_v<T, List>) {
-            return s7_is_pair(p);
-        }
-        // TODO: add is_rational, is_ratio and is_complex?
+             if constexpr(std::is_same_v<T, s7_pointer>) { return p; }
+        else if constexpr(std::is_same_v<T, bool>) { return s7_is_boolean(p); }
+        else if constexpr(std::is_same_v<T, s7_int>) { return s7_is_integer(p); }
+        else if constexpr(std::is_same_v<T, double>) { return s7_is_real(p); }
+        else if constexpr(std::is_same_v<T, const char *>
+                       || std::is_same_v<T, std::string_view>) { return s7_is_string(p); }
+        else if constexpr(std::is_same_v<T, unsigned char>) { return s7_is_character(p); }
+        else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return s7_is_vector(p); }
+        else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return s7_is_int_vector(p); }
+        else if constexpr(std::is_same_v<T, std::span<double>>) { return s7_is_float_vector(p); }
+        else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return s7_is_byte_vector(p); }
+        else if constexpr(std::is_pointer_v<T>) { return s7_is_c_pointer(p); }
+        else if constexpr(std::is_same_v<T, List>) { return s7_is_pair(p); }
         return s7_is_c_object(p) && s7_c_object_type(p) == TypeTag<T>::tag;
     }
 
-    template <OutputType T>
+    template <typename T>
+    T to(s7_pointer p)
+    {
+        assert(is<T>(p) && "p isn't an object of type T");
+             if constexpr(std::is_same_v<T, s7_pointer>) { return p; }
+        else if constexpr(std::is_same_v<T, bool>) { return s7_boolean(sc, p); }
+        else if constexpr(std::is_same_v<T, s7_int>) { return s7_integer(p); }
+        else if constexpr(std::is_same_v<T, double>) { return s7_real(p); }
+        else if constexpr(std::is_same_v<T, const char *>) { return s7_string(p); } // do not free
+        else if constexpr(std::is_same_v<T, std::string_view>) { return std::string_view(s7_string(p)); } // do not free
+        else if constexpr(std::is_same_v<T, char>) { return static_cast<char>(s7_character(p)); }
+        else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return std::span(s7_vector_elements(p), s7_vector_length(p)); }
+        else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return std::span(s7_int_vector_elements(p), s7_vector_length(p)); }
+        else if constexpr(std::is_same_v<T, std::span<double>>) { return std::span(s7_float_vector_elements(p), s7_vector_length(p)); }
+        else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return std::span(s7_byte_vector_elements(p), s7_vector_length(p)); }
+        else if constexpr(std::is_pointer_v<T>) { return s7_c_pointer(p); }
+        else if constexpr(std::is_same_v<T, List>) { return List(p); }
+        else { return *reinterpret_cast<T *>(s7_c_object_value(p)); }
+    }
+
+    template <typename T>
     s7_pointer from(const T &x)
     {
-        if constexpr(std::is_same_v<T, s7_pointer>) { return x; }
-        else if constexpr(std::is_same_v<T, bool>) {
-            return s7_make_boolean(sc, x);
-        } else if constexpr(std::is_same_v<T, s7_int>
-                         || std::is_same_v<T, int>
-                         || std::is_same_v<T, short>
-                         || std::is_same_v<T, long>) {
-            return s7_make_integer(sc, x);
-        } else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) {
-            return s7_make_real(sc, x);
-        } else if constexpr(std::is_same_v<T, const char *>) {
-            return s7_make_string(sc, x);
-        } else if constexpr(std::is_same_v<T, std::string>) {
-            return s7_make_string_with_length(sc, x.c_str(), x.size());
-        } else if constexpr(std::is_same_v<T, std::string_view>) {
-            return s7_make_string_with_length(sc, x.data(), x.size());
-        } else if constexpr(std::is_same_v<T, unsigned char>) {
-            return s7_make_character(sc, x);
-        }  else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) {
-            auto vec = s7_make_vector(sc, x.size(), 1, nullptr);
+             if constexpr(std::is_same_v<T, s7_pointer>) { return x; }
+        else if constexpr(std::is_same_v<T, bool>) { return s7_make_boolean(sc, x); }
+        else if constexpr(std::is_same_v<T, s7_int> || std::is_same_v<T, int>
+                       || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_make_integer(sc, x); }
+        else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) { return s7_make_real(sc, x); }
+        else if constexpr(std::is_same_v<T, const char *>) { return s7_make_string(sc, x); }
+        else if constexpr(std::is_same_v<std::remove_cvref<T>, std::string>) { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
+        else if constexpr(std::is_same_v<T, std::string_view>) { return s7_make_string_with_length(sc, x.data(), x.size()); }
+        else if constexpr(std::is_same_v<T, unsigned char>) { return s7_make_character(sc, x); }
+        else if constexpr(std::is_same_v<T, std::span<s7_pointer>> || std::is_same_v<T, std::vector<s7_pointer>>) {
+            auto vec = s7_make_vector(sc, x.size());
             for (size_t i = 0; i < x.size(); i++) {
                 s7_vector_set(sc, vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_same_v<T, std::span<int>>) {
+        } else if constexpr(std::is_same_v<T, std::span<s7_int>> || std::is_same_v<T, std::vector<s7_int>>
+                         || std::is_same_v<T, std::span<int>>    || std::is_same_v<T, std::vector<int>>
+                         || std::is_same_v<T, std::span<short>>  || std::is_same_v<T, std::vector<short>>
+                         || std::is_same_v<T, std::span<long>>   || std::is_same_v<T, std::vector<long>>) {
             auto vec = s7_make_int_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_int_vector_set(vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_same_v<T, std::span<double>>) {
+        } else if constexpr(std::is_same_v<T, std::span<double>> || std::is_same_v<T, std::vector<double>>
+                         || std::is_same_v<T, std::span<float>>  || std::is_same_v<T, std::vector<float>>) {
             auto vec = s7_make_float_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_float_vector_set(vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_same_v<T, std::span<uint8_t>>) {
+        } else if constexpr(std::is_same_v<T, std::span<uint8_t>> || std::is_same_v<T, std::vector<uint8_t>>) {
             auto vec = s7_make_byte_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_byte_vector_set(vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_null_pointer_v<T>) {
-            return s7_nil(sc);
-        } else if constexpr(std::is_pointer_v<T>) {
-            return s7_make_c_pointer(sc, x);
-        } else if constexpr(std::is_same_v<T, List>) {
-            return x.ptr();
         }
+        else if constexpr(std::is_pointer_v<T>) { return s7_make_c_pointer(sc, x); }
+        else if constexpr(std::is_same_v<T, List>) { return x.ptr(); }
         if (TypeTag<T>::tag != -1) {
             return s7_make_c_object(sc, TypeTag<T>::tag, reinterpret_cast<void *>(new T(x)));
         }
         assert(false && "failed to create s7_pointer from T");
     }
 
-    template <InputType T>
-    auto to(s7_pointer p)
-    {
-        assert(is<T>(p) && "p isn't an object of type T");
-        if constexpr(std::is_same_v<T, s7_pointer>) {
-            return p;
-        } else if constexpr(std::is_same_v<T, bool>) {
-            return s7_boolean(sc, p);
-        } else if constexpr(std::is_same_v<T, s7_int>
-                         || std::is_same_v<T, int>
-                         || std::is_same_v<T, short>
-                         || std::is_same_v<T, long>) {
-            return s7_integer(p);
-        } else if constexpr(std::is_same_v<T, double>) {
-            return s7_real(p);
-        } else if constexpr(std::is_same_v<T, const char *>) {
-            return s7_string(p);
-        } else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>) {
-            return std::string(s7_string(p));
-        } else if constexpr(std::is_same_v<T, std::string_view>) {
-            return std::string_view(s7_string(p));
-        } else if constexpr(std::is_same_v<T, unsigned char>) {
-            return s7_character(p);
-        } else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) {
-            return std::span(s7_vector_elements(p), s7_vector_length(p));
-        } else if constexpr(std::is_same_v<T, std::span<s7_int>>) {
-            return std::span(s7_int_vector_elements(p), s7_vector_length(p));
-        } else if constexpr(std::is_same_v<T, std::span<double>>) {
-            return std::span(s7_float_vector_elements(p), s7_vector_length(p));
-        } else if constexpr(std::is_same_v<T, std::span<uint8_t>>) {
-            return std::span(s7_byte_vector_elements(p), s7_vector_length(p));
-        } else if constexpr(std::is_null_pointer_v<T>) {
-            return nullptr;
-        } else if constexpr(std::is_same_v<T, std::is_pointer<T>>) {
-            return s7_c_pointer(p);
-        } else if constexpr(std::is_same_v<T, List>) {
-            return List(p);
-        } else {
-            return reinterpret_cast<T *>(s7_c_object_value(p));
-        }
-    }
-
-    template <InputType T>
-    auto to_opt(s7_pointer p) -> std::optional<decltype(std::declval<s7>().to<T>(p))>
+    template <typename T>
+    std::optional<T> to_opt(s7_pointer p)
     {
         if (!is<T>(p)) {
             return std::nullopt;
         }
-        return std::optional(to<T>(p));
+        return to<T>(p);
     }
 
-    template <typename T = std::string>
-    T to_string(s7_pointer p)
+    std::string_view to_string(s7_pointer p)
     {
-        return this->to<T>(s7_object_to_string(sc, p, true));
+        // avoid s7_object_to_c_string since return value must be freed
+        return this->to<std::string_view>(s7_object_to_string(sc, p, true));
     }
 
-    template <typename T>
+    template <OutputType T>
     List list(const T &arg)
     {
         return List(s7_cons(sc, this->from<T>(arg), s7_nil(sc)));
     }
 
-    template <typename T, typename... Args>
+    template <OutputType T, typename... Args>
     List list(const T &arg, Args&&... args)
     {
         return List(s7_cons(sc, this->from<T>(arg), list(args...).ptr()));
@@ -472,9 +413,9 @@ struct s7 {
         auto tag = s7_make_c_type(sc, name.data());
         TypeTag<T>::tag = tag;
 
-        if constexpr(requires { T(); }) {
-            auto ctor = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-                s7 *scheme = reinterpret_cast<s7 *>(&sc);
+        if constexpr(requires { T(sc); }) {
+            auto ctor = [](s7_scheme *sc, s7_pointer) -> s7_pointer {
+                // s7 *scheme = reinterpret_cast<s7 *>(&sc);
                 return s7_make_c_object(sc, TypeTag<T>::tag, reinterpret_cast<void *>(new T(sc)));
             };
             auto ctor_name = std::string("make-") + std::string(name);
@@ -500,7 +441,7 @@ struct s7 {
                 return nullptr;
             });
         } else {
-            s7_c_type_set_gc_free(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
+            s7_c_type_set_gc_free(sc, tag, [](s7_scheme *, s7_pointer obj) -> s7_pointer {
                 T *o = reinterpret_cast<T *>(obj);
                 delete o;
                 return nullptr;
@@ -535,7 +476,6 @@ struct s7 {
         auto is_doc  = std::string("(") + is_name + " x) checks if x is a " + std::string(name);
         auto is = [](s7_scheme *sc, s7_pointer args) {
             auto &scheme = *reinterpret_cast<s7 *>(&sc);
-            auto tag = TypeTag<T>::tag;
             return scheme.from<bool>(scheme.is<T>(s7_car(args)));
         };
         this->define_function(is_name.c_str(), is, 0, 0, false, is_doc.c_str());
@@ -565,13 +505,13 @@ struct Variable {
         s7_symbol_set_value(scheme->sc, sym, scheme->from<T>(v)); return *this;
     }
 
-    template <typename T>
+    template <OutputType T>
     T as()
     {
         return scheme->to<T>(s7_symbol_value(scheme->sc, sym));
     }
 
-    template <typename T>
+    template <OutputType T>
     auto as_opt()
     {
         return scheme->to_opt<T>(s7_symbol_value(scheme->sc, sym));
