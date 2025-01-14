@@ -90,6 +90,57 @@ bool operator==(const List::iterator &a, const List::iterator &b)
 
 struct Variable;
 
+// TODO: get rid of int, short, long, float and std::string?
+template <typename T>
+concept InputType = std::is_same_v<T, s7_pointer>
+                 || std::is_same_v<T, bool>
+                 || std::is_same_v<T, s7_int>
+                 || std::is_same_v<T, int>
+                 || std::is_same_v<T, short>
+                 || std::is_same_v<T, long>
+                 || std::is_same_v<T, float>
+                 || std::is_same_v<T, double>
+                 || std::is_same_v<T, const char *>
+                 || std::is_same_v<std::remove_cvref_t<T>, std::string>
+                 || std::is_same_v<T, std::string_view>
+                 || std::is_same_v<T, char>                     // character
+                 || std::is_same_v<T, std::span<s7_pointer>>    // generic vector
+                 || std::is_same_v<T, std::span<s7_int>>        // int vector
+                 || std::is_same_v<T, std::span<double>>        // float vector
+                 || std::is_same_v<T, std::span<uint8_t>>       // byte vector
+                 || std::is_same_v<T, std::is_pointer<T>>       // c-pointer
+                 || std::is_same_v<T, List>;
+
+template <typename T>
+concept OutputType = std::is_same_v<T, s7_pointer>
+                  || std::is_same_v<T, bool>
+                  || std::is_same_v<T, s7_int>
+                  || std::is_same_v<T, int>
+                  || std::is_same_v<T, short>
+                  || std::is_same_v<T, long>
+                  || std::is_same_v<T, float>
+                  || std::is_same_v<T, double>
+                  || std::is_same_v<T, const char *>
+                  || std::is_same_v<std::remove_cvref_t<T>, std::string>
+                  || std::is_same_v<T, std::string_view>
+                  || std::is_same_v<T, char>                     // character
+                  || std::is_same_v<T, std::span<s7_pointer>>    // generic vector
+                  || std::is_same_v<T, std::span<s7_int>>        // int vector
+                  || std::is_same_v<T, std::span<int>>
+                  || std::is_same_v<T, std::span<short>>
+                  || std::is_same_v<T, std::span<long>>
+                  || std::is_same_v<T, std::span<double>>
+                  || std::is_same_v<T, std::span<uint8_t>>
+                  || std::is_same_v<T, std::vector<s7_pointer>>
+                  || std::is_same_v<T, std::vector<s7_int>>
+                  || std::is_same_v<T, std::vector<int>>
+                  || std::is_same_v<T, std::vector<short>>
+                  || std::is_same_v<T, std::vector<long>>
+                  || std::is_same_v<T, std::vector<double>>
+                  || std::is_same_v<T, std::vector<uint8_t>>
+                  || std::is_same_v<T, std::is_pointer<T>>
+                  || std::is_same_v<T, List>;
+
 template <typename T>
 std::string_view type_to_string()
 {
@@ -208,16 +259,16 @@ struct s7 {
         return s7_is_c_object(p) && s7_c_object_type(p) == TypeTag<T>::tag;
     }
 
-    template <typename T>
+    template <OutputType T>
     s7_pointer from(const T &x)
     {
         if constexpr(std::is_same_v<T, s7_pointer>) { return x; }
         else if constexpr(std::is_same_v<T, bool>) {
             return s7_make_boolean(sc, x);
         } else if constexpr(std::is_same_v<T, s7_int>
-                       || std::is_same_v<T, int>
-                       || std::is_same_v<T, short>
-                       || std::is_same_v<T, long>) {
+                         || std::is_same_v<T, int>
+                         || std::is_same_v<T, short>
+                         || std::is_same_v<T, long>) {
             return s7_make_integer(sc, x);
         } else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) {
             return s7_make_real(sc, x);
@@ -229,7 +280,7 @@ struct s7 {
             return s7_make_string_with_length(sc, x.data(), x.size());
         } else if constexpr(std::is_same_v<T, unsigned char>) {
             return s7_make_character(sc, x);
-        }  else if constexpr(std::is_same_v<T, std::span<double>>) {
+        }  else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) {
             auto vec = s7_make_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_vector_set(sc, vec, i, x[i]);
@@ -266,7 +317,7 @@ struct s7 {
         assert(false && "failed to create s7_pointer from T");
     }
 
-    template <typename T>
+    template <InputType T>
     auto to(s7_pointer p)
     {
         assert(is<T>(p) && "p isn't an object of type T");
@@ -308,7 +359,7 @@ struct s7 {
         }
     }
 
-    template <typename T>
+    template <InputType T>
     auto to_opt(s7_pointer p) -> std::optional<decltype(std::declval<s7>().to<T>(p))>
     {
         if (!is<T>(p)) {
