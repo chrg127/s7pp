@@ -364,6 +364,11 @@ struct s7 {
         return s7_define_function(sc, name.data(), func, required_args, optional_args, rest_arg, doc.data());
     }
 
+    s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, s7_pointer (*fptr)(s7_scheme *sc, s7_pointer args))
+    {
+        return s7_define_function(sc, name.data(), fptr, 0, 0, true, doc.data());
+    }
+
     template <typename R, typename... Args>
     s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, R (*fptr)(Args...))
     {
@@ -393,6 +398,51 @@ struct s7 {
 
             auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                 return fn(scheme.to<Args>(arr[Is])...);
+            }(std::make_index_sequence<NumArgs>());
+            return scheme.from<R>(res);
+        };
+
+        auto private_name = std::format("__cpp:{}", name);
+        s7_define_function(sc, private_name.c_str(), f, NumArgs+3, 0, false, doc.data());
+
+        auto eval_str = std::format(
+            "(let ((self {}) (fn {}) (name \"{}\")) "
+              "(lambda args (apply {} (cons self (cons fn (cons name args))))))",
+            (uintptr_t) this, (uintptr_t) fptr, name, private_name);
+        auto p = eval(eval_str.c_str());
+        s7_define_variable_with_documentation(sc, name.data(), p, doc.data());
+        return p;
+    }
+
+    template <typename R, typename... Args>
+    s7_pointer define_fun_from_ptr(std::string_view name, std::string_view doc, R (*fptr)(s7_scheme *, Args...))
+    {
+        constexpr auto NumArgs = sizeof...(Args);
+
+        auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            auto &scheme = *reinterpret_cast<s7 *>(s7_integer(s7_car(args)));
+            auto *fn = reinterpret_cast<R(*)(s7_scheme *, Args...)>(s7_integer(s7_cadr(args)));
+            auto name = std::string_view(s7_string(s7_caddr(args)));
+            auto arglist = List(s7_cdddr(args));
+
+            std::array<s7_pointer, NumArgs> arr;
+            for (std::size_t i = 0; i < NumArgs; i++) {
+                arr[i] = arglist.advance();
+            }
+            auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return std::array { scheme.is<Args>(arr[Is])... };
+            }(std::make_index_sequence<NumArgs>());
+            auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
+
+            if (first_wrong_type != bools.end()) {
+                auto i = first_wrong_type - bools.begin();
+                arglist = List(s7_cdddr(args));
+                auto types = std::array { type_to_string<Args>()... };
+                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
+            }
+
+            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return fn(sc, scheme.to<Args>(arr[Is])...);
             }(std::make_index_sequence<NumArgs>());
             return scheme.from<R>(res);
         };

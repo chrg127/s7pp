@@ -33,6 +33,9 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
     auto &scheme = *reinterpret_cast<s7::s7 *>(&sc);
     auto args = s7::List(_args);
     printf("add1 called\n");
+    if (args.size() != 1) {
+        return s7_wrong_number_of_args_error(sc, "add1", _args);
+    }
     if (scheme.is<int64_t>(args[0])) {
         return scheme.from<int64_t>(scheme.to<int64_t>(args[0]) + 1);
     }
@@ -122,6 +125,14 @@ s7_pointer set_add(Set &set, s7_pointer arg)
     return arg;
 }
 
+s7_pointer do_stuff(s7_scheme *sc, int64_t x)
+{
+    if (x > 100) {
+        return s7_wrong_type_arg_error(sc, "do-stuff", 0, s7_make_integer(sc, x), "int");
+    }
+    return s7_make_integer(sc, x + 2);
+}
+
 void test_define_function()
 {
     s7::s7 scheme;
@@ -129,6 +140,8 @@ void test_define_function()
     scheme.define_fun_from_ptr("add-int", "doc", add_int);
     scheme.define_fun_from_ptr("str-test", "doc", print_append);
     scheme.define_fun_from_ptr("index-of-vec", "doc", find);
+    scheme.define_fun_from_ptr("add1", "doc", add1);
+    scheme.define_fun_from_ptr("do-stuff", "doc", do_stuff);
     scheme.repl();
 }
 
@@ -145,7 +158,7 @@ int main()
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
-    // test_define_function();
-    test_set();
+    test_define_function();
+    // test_set();
 }
 
