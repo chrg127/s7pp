@@ -102,7 +102,7 @@ std::string_view type_to_string()
                    || std::is_same_v<T, long>) { return "integer"; }
     else if constexpr(std::is_same_v<T, double>) { return "real"; }
     else if constexpr(std::is_same_v<T, const char *>
-                   || std::is_same_v<T, std::string>
+                   || std::is_same_v<std::remove_cvref_t<T>, std::string>
                    || std::is_same_v<T, std::string_view>) { return "string"; }
     else if constexpr(std::is_same_v<T, unsigned char>) { return "character"; }
     else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return "vector"; }
@@ -184,7 +184,7 @@ struct s7 {
                          || std::is_same_v<T, float>) {
             return s7_is_real(p);
         } else if constexpr(std::is_same_v<T, const char *>
-                         || std::is_same_v<T, std::string>
+                         || std::is_same_v<std::remove_cvref_t<T>, std::string>
                          || std::is_same_v<T, std::string_view>) {
             return s7_is_string(p);
         } else if constexpr(std::is_same_v<T, unsigned char>) {
@@ -283,7 +283,7 @@ struct s7 {
             return s7_real(p);
         } else if constexpr(std::is_same_v<T, const char *>) {
             return s7_string(p);
-        } else if constexpr(std::is_same_v<T, std::string>) {
+        } else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>) {
             return std::string(s7_string(p));
         } else if constexpr(std::is_same_v<T, std::string_view>) {
             return std::string_view(s7_string(p));

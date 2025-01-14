@@ -57,9 +57,20 @@ void test_conversion()
 double add_double(double a, double b) { return a + b; }
 int add_int(int x, int y) { return x + y + 1; }
 
-std::string print_append(const std::string &s) {
+std::string print_append(const std::string &s)
+{
     printf("a string! %s\n", s.c_str());
     return s + " blah";
+}
+
+int find(std::span<s7_int> vec, int obj)
+{
+    for (int i = 0; i < vec.size(); i++) {
+        if (vec[i] == obj) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 void test_define_function()
@@ -67,7 +78,8 @@ void test_define_function()
     s7::s7 scheme;
     scheme.define_fun_from_ptr("add-double", "doc", add_double);
     scheme.define_fun_from_ptr("add-int", "doc", add_int);
-    // scheme.define_fun_from_ptr("str-test", "doc", print_append);
+    scheme.define_fun_from_ptr("str-test", "doc", print_append);
+    scheme.define_fun_from_ptr("index-of-vec", "doc", find);
     scheme.repl();
 }
 
