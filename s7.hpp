@@ -191,7 +191,12 @@ struct s7 {
     s7_scheme *sc;
 
     s7() : sc(s7_init()) {}
-    ~s7() { s7_free(sc); }
+
+    ~s7()
+    {
+        s7_quit(sc);
+        s7_free(sc);
+    }
 
     s7(const s7 &) = delete;
     s7 & operator=(const s7 &) = delete;
@@ -323,8 +328,9 @@ struct s7 {
         else if constexpr(std::is_pointer_v<T>) { return s7_make_c_pointer(sc, x); }
         else if constexpr(std::is_same_v<T, List>) { return x.ptr(); }
         else {
-            if (TypeTag<T>::tag != -1) {
-                return s7_make_c_object(sc, TypeTag<T>::tag, reinterpret_cast<void *>(new T(x)));
+            auto tag = TypeTag<std::remove_cvref_t<T>>::tag;
+            if (tag != -1) {
+                return s7_make_c_object(sc, tag, reinterpret_cast<void *>(new T(x)));
             }
             assert(false && "failed to create s7_pointer from T");
         }
@@ -386,13 +392,41 @@ struct s7 {
 
     Variable operator[](std::string_view name);
 
-    /* functions */
+    /* signatures */
+    template <typename T>
+    s7_pointer sig_type()
+    {
+             if constexpr(std::is_same_v<T, s7_pointer>) { return s7_t(sc); }
+        else if constexpr(std::is_same_v<T, bool>) { return s7_make_symbol(sc, "boolean?"); }
+        else if constexpr(std::is_same_v<T, s7_int>) { return s7_make_symbol(sc, "integer?"); }
+        else if constexpr(std::is_same_v<T, double>) { return s7_make_symbol(sc, "real?"); }
+        else if constexpr(std::is_same_v<T, const char *>) { return s7_make_symbol(sc, "string?"); }
+        else if constexpr(std::is_same_v<T, std::string_view>) { return s7_make_symbol(sc, "string?"); }
+        else if constexpr(std::is_same_v<T, char>) { return s7_make_symbol(sc, "character?"); }
+        else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return s7_make_symbol(sc, "vector?"); }
+        else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return s7_make_symbol(sc, "int-vector?"); }
+        else if constexpr(std::is_same_v<T, std::span<double>>) { return s7_make_symbol(sc, "float-vector?"); }
+        else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return s7_make_symbol(sc, "byte-vector?"); }
+        else if constexpr(std::is_pointer_v<T>) { return s7_make_symbol(sc, "c-pointer?"); }
+        else if constexpr(std::is_same_v<T, List>) { return s7_make_symbol(sc, "list?"); }
+        else { return s7_make_symbol(sc, "c-object?"); }
+    }
+
+    template <typename R, typename... Args>
+    s7_pointer make_signature()
+    {
+        return s7_make_signature(sc, sizeof...(Args) + 2, sig_type<R>(), s7_t(sc), sig_type<Args>()...);
+    }
+
+
+    /* calling functions */
     template <typename... T>
     s7_pointer call(std::string_view name, T&&... args)
     {
         return s7_call(sc, s7_name_to_value(sc, name.data()), this->list(args...).ptr());
     }
 
+    /* function creation */
     s7_pointer define_function(std::string_view name, std::string_view doc, s7_pointer (*fptr)(s7_scheme *sc, s7_pointer args))
     {
         return s7_define_function(sc, name.data(), fptr, 0, 0, true, doc.data());
@@ -404,15 +438,23 @@ struct s7 {
         constexpr auto NumArgs = sizeof...(Args);
 
         auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto &scheme = *reinterpret_cast<s7 *>(s7_integer(s7_car(args)));
-            auto *fn = reinterpret_cast<R(*)(Args...)>(s7_integer(s7_cadr(args)));
-            auto name = std::string_view(s7_string(s7_caddr(args)));
-            auto arglist = List(s7_cdddr(args));
+            // auto &scheme = *reinterpret_cast<s7 *>(s7_integer(s7_car(args)));
+            // auto *fn = reinterpret_cast<R(*)(Args...)>(s7_integer(s7_cadr(args)));
+            // auto name = std::string_view(s7_string(s7_caddr(args)));
+            //args = s7_cdddr(args);
 
+            auto this_fn = s7_car(args);
+            auto &scheme = *reinterpret_cast<s7 *>(s7_c_pointer(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "interpreter"))));
+            auto *fn = reinterpret_cast<R(*)(Args...)>(s7_c_pointer(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "fn-ptr"))));
+            auto name = std::string_view(s7_string(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "fn-name"))));
+            args = s7_cdr(args);
+
+            auto arglist = List(args);
             std::array<s7_pointer, NumArgs> arr;
             for (std::size_t i = 0; i < NumArgs; i++) {
                 arr[i] = arglist.advance();
             }
+
             auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                 return std::array { scheme.is<Args>(arr[Is])... };
             }(std::make_index_sequence<NumArgs>());
@@ -420,7 +462,7 @@ struct s7 {
 
             if (first_wrong_type != bools.end()) {
                 auto i = first_wrong_type - bools.begin();
-                arglist = List(s7_cdddr(args));
+                arglist = List(args);
                 auto types = std::array { type_to_string<Args>()... };
                 return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i].data());
             }
@@ -431,15 +473,24 @@ struct s7 {
             return scheme.from<R>(res);
         };
 
+        auto private_name = name;
+        auto let = s7_sublet(sc, s7_rootlet(sc), s7_nil(sc));
+        s7_define(sc, let, s7_make_symbol(sc, "interpreter"), s7_make_c_pointer(sc, reinterpret_cast<void *>(this)));
+        s7_define(sc, let, s7_make_symbol(sc, "fn-ptr"), s7_make_c_pointer(sc, reinterpret_cast<void *>(fptr)));
+        s7_define(sc, let, s7_make_symbol(sc, "fn-name"), s7_make_string(sc, private_name.data()));
+        auto p = s7_make_typed_function_with_environment(sc, private_name.data(), f, NumArgs+1, 0, false, doc.data(), make_signature<R, Args...>(), let);
+        s7_define_variable(sc, private_name.data(), p);
+
+        /*
         auto private_name = std::format("__cpp:{}", name);
         s7_define_function(sc, private_name.c_str(), f, NumArgs+3, 0, false, doc.data());
-
         auto eval_str = std::format(
             "(let ((self {}) (fn {}) (name \"{}\")) "
               "(lambda args (apply {} (cons self (cons fn (cons name args))))))",
             (uintptr_t) this, (uintptr_t) fptr, name, private_name);
         auto p = eval(eval_str.c_str());
         s7_define_variable_with_documentation(sc, name.data(), p, doc.data());
+        */
         return p;
     }
 
