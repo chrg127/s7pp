@@ -166,9 +166,6 @@ void test_define_function()
         printf("i = %d\n", i);
         return i;
     };
-    f();
-    f();
-    f();
 
     scheme.define_function("inc2", "doc", f);
 

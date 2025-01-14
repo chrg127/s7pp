@@ -579,7 +579,7 @@ struct s7 {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             auto name = std::string_view("caller");
-            auto fn = detail::LambdaTable<L>::lambda;
+            auto &fn = detail::LambdaTable<L>::lambda;
             auto &scheme = *reinterpret_cast<s7 *>(sc);
 
             auto arglist = List(args);
@@ -620,7 +620,7 @@ struct s7 {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             auto name = std::string_view("caller");
-            auto fn = detail::LambdaTable<L>::lambda;
+            auto &fn = detail::LambdaTable<L>::lambda;
             auto &scheme = *reinterpret_cast<s7 *>(sc);
 
             auto arglist = List(args);
