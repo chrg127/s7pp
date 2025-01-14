@@ -39,7 +39,20 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
     if (scheme.is<int64_t>(args[0])) {
         return scheme.from<int64_t>(scheme.to<int64_t>(args[0]) + 1);
     }
-    return scheme.wrong_argument_type_error("add1", 1, args[0], "an integer");
+
+    return scheme.error(s7::errors::Error {
+        .type = "some-error",
+        .info = scheme.list("~a != ~a", 1, 2),
+    });
+
+    /*
+    return scheme.error(s7::errors::WrongType {
+       .arg = args[0],
+       .arg_n = 1,
+       .type = "integer",
+       .caller = "add1",
+   });
+   */
 }
 
 void test_c_defined_function()

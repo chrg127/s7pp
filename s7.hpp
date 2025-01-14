@@ -159,6 +159,34 @@ std::string_view type_to_string()
     else { return "?"; }
 }
 
+namespace errors {
+
+struct Error {
+    std::string_view type;
+    List info;
+};
+
+struct WrongType {
+    s7_pointer arg;
+    s7_int arg_n;
+    std::string_view type;
+    std::string_view caller;
+};
+
+struct OutOfRange {
+    s7_pointer arg;
+    std::string_view type;
+    s7_int arg_n;
+    std::string_view caller;
+};
+
+struct WrongArgsNumber {
+    s7_pointer args;
+    std::string_view caller;
+};
+
+} // errors
+
 struct s7 {
     s7_scheme *sc;
 
@@ -259,7 +287,7 @@ struct s7 {
         else if constexpr(std::is_same_v<T, s7_int> || std::is_same_v<T, int>
                        || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_make_integer(sc, x); }
         else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) { return s7_make_real(sc, x); }
-        else if constexpr(std::is_same_v<T, const char *>) { return s7_make_string(sc, x); }
+        else if constexpr(std::is_same_v<std::decay_t<std::remove_cvref_t<T>>, char *>) { return s7_make_string(sc, x); }
         else if constexpr(std::is_same_v<std::remove_cvref<T>, std::string>) { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
         else if constexpr(std::is_same_v<T, std::string_view>) { return s7_make_string_with_length(sc, x.data(), x.size()); }
         else if constexpr(std::is_same_v<T, unsigned char>) { return s7_make_character(sc, x); }
@@ -294,10 +322,12 @@ struct s7 {
         }
         else if constexpr(std::is_pointer_v<T>) { return s7_make_c_pointer(sc, x); }
         else if constexpr(std::is_same_v<T, List>) { return x.ptr(); }
-        if (TypeTag<T>::tag != -1) {
-            return s7_make_c_object(sc, TypeTag<T>::tag, reinterpret_cast<void *>(new T(x)));
+        else {
+            if (TypeTag<T>::tag != -1) {
+                return s7_make_c_object(sc, TypeTag<T>::tag, reinterpret_cast<void *>(new T(x)));
+            }
+            assert(false && "failed to create s7_pointer from T");
         }
-        assert(false && "failed to create s7_pointer from T");
     }
 
     template <typename T>
@@ -315,22 +345,26 @@ struct s7 {
         return this->to<std::string_view>(s7_object_to_string(sc, p, true));
     }
 
-    template <OutputType T>
+    template <typename T>
     List list(const T &arg)
     {
         return List(s7_cons(sc, this->from<T>(arg), s7_nil(sc)));
     }
 
-    template <OutputType T, typename... Args>
+    template <typename T, typename... Args>
     List list(const T &arg, Args&&... args)
     {
         return List(s7_cons(sc, this->from<T>(arg), list(args...).ptr()));
     }
 
     /* errors */
-    s7_pointer wrong_argument_type_error(std::string_view function_name, int arg_number, s7_pointer arg, std::string_view desc)
+    template <typename T>
+    s7_pointer error(T data)
     {
-        return s7_wrong_type_arg_error(sc, function_name.data(), arg_number, arg, desc.data());
+        if constexpr(std::is_same_v<T, errors::Error>)      { return s7_error(sc, s7_make_symbol(sc, data.type.data()), data.info.ptr()); }
+        if constexpr(std::is_same_v<T, errors::WrongType>)  { return s7_wrong_type_arg_error(sc, data.caller.data(), data.arg_n, data.arg, data.type.data()); }
+        if constexpr(std::is_same_v<T, errors::OutOfRange>) { return s7_out_of_range_error(sc, data.caller.data(), data.arg_n, data.arg, data.type.data()); }
+        if constexpr(std::is_same_v<T, errors::WrongArgsNumber>) { return s7_wrong_number_of_args_error(sc, data.caller.data(), data.args); }
     }
 
     /* variables and symbols */
