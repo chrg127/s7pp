@@ -150,8 +150,8 @@ s7_pointer do_stuff(s7_scheme *sc, int64_t x)
 void test_define_function()
 {
     s7::s7 scheme;
-    // scheme.define_function("add-double", "doc", add_double);
-    // scheme.define_function("add-int", "doc", add_int);
+    scheme.define_function("add-double", "doc", add_double);
+    scheme.define_function("add-int", "doc", add_int);
     // scheme.define_function("str-test", "doc", print_append);
     // scheme.define_function("index-of-vec", "doc", find);
     // scheme.define_function("add1", "doc", add1);
@@ -177,7 +177,7 @@ void test_set()
     s7::s7 scheme;
     scheme.make_c_type<Set>("set");
     // scheme.define_function("set-add!", "(set-add! set value) adds value to set", set_add);
-    // scheme.define_function("set-add!", "doc", &Set::add);
+    scheme.define_function("set-add!", "doc", &Set::add);
     scheme.repl();
 }
 
@@ -186,7 +186,7 @@ int main()
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
-    test_define_function();
-    // test_set();
+    // test_define_function();
+    test_set();
 }
 

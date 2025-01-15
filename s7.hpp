@@ -470,6 +470,7 @@ struct s7 {
         return s7_define_function(sc, name.data(), fptr, 0, 0, true, doc.data());
     }
 
+    /*
     template <typename R, typename... Args>
     s7_pointer define_function(std::string_view name, std::string_view doc, R (*fptr)(Args...))
     {
@@ -515,7 +516,9 @@ struct s7 {
         s7_define_variable(sc, private_name.data(), p);
         return p;
     }
+    */
 
+    /*
     template <typename C, typename R, typename... Args>
     s7_pointer define_function(std::string_view name, std::string_view doc, R (C::*fptr)(Args...))
     {
@@ -572,15 +575,16 @@ struct s7 {
         s7_define_variable(sc, private_name.data(), p);
         return p;
     }
+    */
 
     template <typename L, typename R, typename... Args>
-    s7_function make_f(R (L::*)(Args...) const)
+    s7_function make_f()
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             auto name = std::string_view("caller");
             auto &fn = detail::LambdaTable<L>::lambda;
-            auto &scheme = *reinterpret_cast<s7 *>(sc);
+            auto &scheme = *reinterpret_cast<s7 *>(&sc);
 
             auto arglist = List(args);
             std::array<s7_pointer, NumArgs> arr;
@@ -615,44 +619,15 @@ struct s7 {
     }
 
     template <typename L, typename R, typename... Args>
+    s7_function make_f(R (L::*)(Args...) const)
+    {
+        return make_f<L, R, Args...>();
+    }
+
+    template <typename L, typename R, typename... Args>
     s7_function make_f(R (L::*)(Args...))
     {
-        constexpr auto NumArgs = FunctionTraits<L>::arity;
-        return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto name = std::string_view("caller");
-            auto &fn = detail::LambdaTable<L>::lambda;
-            auto &scheme = *reinterpret_cast<s7 *>(sc);
-
-            auto arglist = List(args);
-            std::array<s7_pointer, NumArgs> arr;
-            for (std::size_t i = 0; i < NumArgs; i++) {
-                arr[i] = arglist.advance();
-            }
-
-            auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return std::array<bool, NumArgs> { scheme.is<Args>(arr[Is])... };
-            }(std::make_index_sequence<NumArgs>());
-            auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
-
-            if (first_wrong_type != bools.end()) {
-                auto i = first_wrong_type - bools.begin();
-                arglist = List(args);
-                auto types = std::array<const char *, NumArgs> { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i]);
-            }
-
-            if constexpr(std::is_same_v<R, void>) {
-                [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                    fn(scheme.to<Args>(arr[Is])...);
-                }(std::make_index_sequence<NumArgs>());
-                return s7_undefined(sc);
-            } else {
-                auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                    return fn(scheme.to<Args>(arr[Is])...);
-                }(std::make_index_sequence<NumArgs>());
-                return scheme.from<R>(res);
-            }
-        };
+        return make_f<L, R, Args...>();
     }
 
     template <typename L>
@@ -665,6 +640,27 @@ struct s7 {
         auto p = s7_make_typed_function_with_environment(sc, name.data(), f, NumArgs, 0, false, doc.data(), make_signature(&std::remove_cvref_t<L>::operator()), let);
         s7_define_variable(sc, name.data(), p);
         return p;
+    }
+
+    template <typename R, typename... Args>
+    s7_pointer define_function(std::string_view name, std::string_view doc, R (*fptr)(Args...))
+    {
+        auto f = [=](Args... args) -> R { return fptr(args...); };
+        return define_function(name, doc, f);
+    }
+
+    template <typename C, typename R, typename... Args>
+    s7_pointer define_function(std::string_view name, std::string_view doc, R (C::*fptr)(Args...))
+    {
+        auto f = [=](C &c, Args... args) -> R { return ((&c)->*fptr)(args...); };
+        return define_function(name, doc, f);
+    }
+
+    template <typename C, typename R, typename... Args>
+    s7_pointer define_function(std::string_view name, std::string_view doc, R (C::*fptr)(Args...) const)
+    {
+        auto f = [=](const C &c, Args... args) -> R { return ((&c)->*fptr)(args...); };
+        return define_function(name, doc, f);
     }
 
     /* usertypes */
