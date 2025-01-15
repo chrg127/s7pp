@@ -271,6 +271,12 @@ struct s7 {
     s7_pointer undefined() { return s7_undefined(sc); }
     s7_pointer nil() { return s7_nil(sc); }
 
+    template <typename T>
+    s7_int get_type_tag()
+    {
+        return TypeTag<std::remove_cvref_t<T>>::tag;
+    }
+
     /* functions for inspecting and converting from/to scheme objects */
     template <typename T>
     bool is(s7_pointer p)
@@ -288,7 +294,7 @@ struct s7 {
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return s7_is_byte_vector(p); }
         else if constexpr(std::is_pointer_v<T>) { return s7_is_c_pointer(p); }
         else if constexpr(std::is_same_v<T, List>) { return s7_is_pair(p); }
-        return s7_is_c_object(p) && s7_c_object_type(p) == TypeTag<std::remove_cvref_t<T>>::tag;
+        return s7_is_c_object(p) && s7_c_object_type(p) == get_type_tag<T>();
     }
 
     template <typename T>
@@ -355,7 +361,7 @@ struct s7 {
         else if constexpr(std::is_pointer_v<T>) { return s7_make_c_pointer(sc, x); }
         else if constexpr(std::is_same_v<T, List>) { return x.ptr(); }
         else {
-            auto tag = TypeTag<std::remove_cvref_t<T>>::tag;
+            auto tag = get_type_tag<T>();
             if (tag != -1) {
                 return s7_make_c_object(sc, tag, reinterpret_cast<void *>(new T(x)));
             }
@@ -465,120 +471,16 @@ struct s7 {
     }
 
     /* function creation */
+
+    // special case for functions that follow s7's standard signature
     s7_pointer define_function(std::string_view name, std::string_view doc, s7_pointer (*fptr)(s7_scheme *sc, s7_pointer args))
     {
         return s7_define_function(sc, name.data(), fptr, 0, 0, true, doc.data());
     }
 
-    /*
-    template <typename R, typename... Args>
-    s7_pointer define_function(std::string_view name, std::string_view doc, R (*fptr)(Args...))
-    {
-        constexpr auto NumArgs = sizeof...(Args);
-
-        auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto this_fn = s7_car(args);
-            auto &scheme = *reinterpret_cast<s7 *>(s7_c_pointer(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "interpreter"))));
-            auto *fn = reinterpret_cast<R(*)(Args...)>(s7_c_pointer(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "fn-ptr"))));
-            auto name = std::string_view(s7_string(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "fn-name"))));
-            args = s7_cdr(args);
-
-            auto arglist = List(args);
-            std::array<s7_pointer, NumArgs> arr;
-            for (std::size_t i = 0; i < NumArgs; i++) {
-                arr[i] = arglist.advance();
-            }
-
-            auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return std::array { scheme.is<Args>(arr[Is])... };
-            }(std::make_index_sequence<NumArgs>());
-            auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
-
-            if (first_wrong_type != bools.end()) {
-                auto i = first_wrong_type - bools.begin();
-                arglist = List(args);
-                // auto types = std::array<const char *> { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], "bye");
-            }
-
-            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return fn(scheme.to<Args>(arr[Is])...);
-            }(std::make_index_sequence<NumArgs>());
-            return scheme.from<R>(res);
-        };
-
-        auto private_name = name;
-        auto let = s7_sublet(sc, s7_rootlet(sc), s7_nil(sc));
-        s7_define(sc, let, s7_make_symbol(sc, "interpreter"), s7_make_c_pointer(sc, reinterpret_cast<void *>(this)));
-        s7_define(sc, let, s7_make_symbol(sc, "fn-ptr"), s7_make_c_pointer(sc, reinterpret_cast<void *>(fptr)));
-        s7_define(sc, let, s7_make_symbol(sc, "fn-name"), s7_make_string(sc, private_name.data()));
-        auto p = s7_make_typed_function_with_environment(sc, private_name.data(), f, NumArgs+1, 0, false, doc.data(), make_signature<R, Args...>(), let);
-        s7_define_variable(sc, private_name.data(), p);
-        return p;
-    }
-    */
-
-    /*
-    template <typename C, typename R, typename... Args>
-    s7_pointer define_function(std::string_view name, std::string_view doc, R (C::*fptr)(Args...))
-    {
-        constexpr auto NumArgs = sizeof...(Args);
-
-        auto f = [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto this_fn = s7_car(args);
-            auto &scheme = *reinterpret_cast<s7 *>(s7_c_pointer(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "interpreter"))));
-            void *fn_ptr = s7_c_pointer(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "fn-ptr")));
-            auto name = std::string_view(s7_string(s7_let_ref(sc, this_fn, s7_make_symbol(sc, "fn-name"))));
-
-            using FnPtr = R(C::*)(Args...);
-            FnPtr fn = nullptr;
-            reinterpret_cast<void *&>(fn) = fn_ptr;
-
-            auto this_obj = s7_cadr(args);
-            if (!scheme.is<C>(this_obj)) {
-                return s7_wrong_type_arg_error(sc, name.data(), 1, this_obj, "c-object");
-            }
-            C *obj = reinterpret_cast<C *>(s7_c_object_value(this_obj));
-
-            args = s7_cddr(args);
-
-            auto arglist = List(args);
-            std::array<s7_pointer, NumArgs> arr;
-            for (std::size_t i = 0; i < NumArgs; i++) {
-                arr[i] = arglist.advance();
-            }
-
-            auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return std::array { scheme.is<Args>(arr[Is])... };
-            }(std::make_index_sequence<NumArgs>());
-            auto first_wrong_type = std::find(bools.begin(), bools.end(), false);
-
-            if (first_wrong_type != bools.end()) {
-                auto i = first_wrong_type - bools.begin();
-                arglist = List(args);
-                // auto types = std::array<const char *> { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], "bye");
-            }
-
-            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return (obj->*fn)(scheme.to<Args>(arr[Is])...);
-            }(std::make_index_sequence<NumArgs>());
-            return scheme.from<R>(res);
-        };
-
-        auto private_name = name;
-        auto let = s7_sublet(sc, s7_rootlet(sc), s7_nil(sc));
-        s7_define(sc, let, s7_make_symbol(sc, "interpreter"), s7_make_c_pointer(sc, reinterpret_cast<void *>(this)));
-        s7_define(sc, let, s7_make_symbol(sc, "fn-ptr"), s7_make_c_pointer(sc, reinterpret_cast<void *>(reinterpret_cast<void *&>(fptr))));
-        s7_define(sc, let, s7_make_symbol(sc, "fn-name"), s7_make_string(sc, private_name.data()));
-        auto p = s7_make_typed_function_with_environment(sc, private_name.data(), f, NumArgs+1+1, 0, false, doc.data(), make_signature<R, Args...>(), let);
-        s7_define_variable(sc, private_name.data(), p);
-        return p;
-    }
-    */
-
+private:
     template <typename L, typename R, typename... Args>
-    s7_function make_f()
+    s7_function make_s7_function()
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
@@ -619,23 +521,24 @@ struct s7 {
     }
 
     template <typename L, typename R, typename... Args>
-    s7_function make_f(R (L::*)(Args...) const)
+    s7_function make_s7_function(R (L::*)(Args...) const)
     {
-        return make_f<L, R, Args...>();
+        return make_s7_function<L, R, Args...>();
     }
 
     template <typename L, typename R, typename... Args>
-    s7_function make_f(R (L::*)(Args...))
+    s7_function make_s7_function(R (L::*)(Args...))
     {
-        return make_f<L, R, Args...>();
+        return make_s7_function<L, R, Args...>();
     }
 
+public:
     template <typename L>
     s7_pointer define_function(std::string_view name, std::string_view doc, L&& lambda)
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         detail::LambdaTable<std::remove_cvref_t<L>>::lambda = lambda;
-        auto f = make_f(&std::remove_cvref_t<L>::operator());
+        auto f = make_s7_function(&std::remove_cvref_t<L>::operator());
         auto let = s7_sublet(sc, s7_rootlet(sc), s7_nil(sc));
         auto p = s7_make_typed_function_with_environment(sc, name.data(), f, NumArgs, 0, false, doc.data(), make_signature(&std::remove_cvref_t<L>::operator()), let);
         s7_define_variable(sc, name.data(), p);
