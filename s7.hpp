@@ -38,6 +38,7 @@ namespace detail {
     template <typename L>
     struct LambdaTable {
         static inline make_function_type<L> lambda;
+        static inline std::unordered_map<uintptr_t, const char *> name;
     };
 }
 
@@ -312,7 +313,7 @@ struct s7 {
         else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return std::span(s7_int_vector_elements(p), s7_vector_length(p)); }
         else if constexpr(std::is_same_v<T, std::span<double>>) { return std::span(s7_float_vector_elements(p), s7_vector_length(p)); }
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return std::span(s7_byte_vector_elements(p), s7_vector_length(p)); }
-        else if constexpr(std::is_pointer_v<T>) { return s7_c_pointer(p); }
+        else if constexpr(std::is_pointer_v<T>) { return reinterpret_cast<T>(s7_c_pointer(p)); }
         else if constexpr(std::is_same_v<T, List>) { return List(p); }
         else { return *reinterpret_cast<std::remove_cvref_t<T> *>(s7_c_object_value(p)); }
     }
@@ -473,9 +474,9 @@ struct s7 {
     /* function creation */
 
     // special case for functions that follow s7's standard signature
-    s7_pointer define_function(std::string_view name, std::string_view doc, s7_pointer (*fptr)(s7_scheme *sc, s7_pointer args))
+    s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn)
     {
-        return s7_define_function(sc, name.data(), fptr, 0, 0, true, doc.data());
+        return s7_define_function(sc, name.data(), fn, 0, 0, true, doc.data());
     }
 
 private:
@@ -484,8 +485,9 @@ private:
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto name = std::string_view("caller");
             auto &fn = detail::LambdaTable<L>::lambda;
+            auto name = detail::LambdaTable<L>::name
+                .find(reinterpret_cast<uintptr_t>(sc))->second;
             auto &scheme = *reinterpret_cast<s7 *>(&sc);
 
             auto arglist = List(args);
@@ -503,7 +505,7 @@ private:
                 auto i = first_wrong_type - bools.begin();
                 arglist = List(args);
                 auto types = std::array<const char *, NumArgs> { type_to_string<Args>()... };
-                return s7_wrong_type_arg_error(sc, name.data(), i+1, arglist[i], types[i]);
+                return s7_wrong_type_arg_error(sc, name, i+1, arglist[i], types[i]);
             }
 
             if constexpr(std::is_same_v<R, void>) {
@@ -537,7 +539,11 @@ public:
     s7_pointer define_function(std::string_view name, std::string_view doc, L&& lambda)
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
-        detail::LambdaTable<std::remove_cvref_t<L>>::lambda = lambda;
+        using Lambda = std::remove_cvref_t<L>;
+        detail::LambdaTable<Lambda>::lambda = lambda;
+        detail::LambdaTable<Lambda>::name.insert_or_assign(
+            reinterpret_cast<uintptr_t>(sc), name.data()
+        );
         auto f = make_s7_function(&std::remove_cvref_t<L>::operator());
         auto let = s7_sublet(sc, s7_rootlet(sc), s7_nil(sc));
         auto p = s7_make_typed_function_with_environment(sc, name.data(), f, NumArgs, 0, false, doc.data(), make_signature(&std::remove_cvref_t<L>::operator()), let);

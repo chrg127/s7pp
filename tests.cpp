@@ -10,21 +10,22 @@ void test_scheme_defined_function()
     scheme["an-integer"] = 1;
     scheme.eval("(define (add1 a) (+ a 1))");
     auto x = scheme["an-integer"].as_opt<int64_t>();
-    printf("%lld\n", x.value());
+    printf("%s\n", std::format("{}", x.value()).c_str());
     printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as<int64_t>()).c_str());
     scheme["an-integer"] = 32;
     printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as_opt<int64_t>().value()).c_str());
     int64_t res = scheme.to<int64_t>(scheme.call("add1", 2));
     printf("%s\n", std::format("(add1 2): {}", res).c_str());
 
-    // scheme.define_function("test-sym", "test symbols", [](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
-    //     auto &scheme = *reinterpret_cast<s7::s7 *>(&sc);
-    //     auto args = s7::List(_args);
-    //     auto sym = s7_symbol_table_find_name(scheme.sc, scheme.to<const char *>(args[0]));
-    //     printf("%p\n", static_cast<void *>(sym));
-    //     printf("%s\n", scheme.to_string(sym).data());
-    //     return scheme.undefined();
-    // });
+    auto fn = [](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
+        auto &scheme = *reinterpret_cast<s7::s7 *>(&sc);
+        auto args = s7::List(_args);
+        auto sym = s7_symbol_table_find_name(scheme.sc, scheme.to<const char *>(args[0]));
+        printf("%p\n", static_cast<void *>(sym));
+        printf("%s\n", scheme.to_string(sym).data());
+        return scheme.undefined();
+    };
+    scheme.define_function("test-sym", "test symbols", s7_function(fn));
 
     scheme.repl();
 }
@@ -41,19 +42,12 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
         return scheme.from<int64_t>(scheme.to<int64_t>(args[0]) + 1);
     }
 
-    return scheme.error(s7::errors::Error {
-        .type = "some-error",
-        .info = scheme.list("~a != ~a", 1, 2),
-    });
-
-    /*
     return scheme.error(s7::errors::WrongType {
        .arg = args[0],
        .arg_n = 1,
        .type = "integer",
        .caller = "add1",
    });
-   */
 }
 
 void test_c_defined_function()
@@ -139,23 +133,14 @@ s7_pointer set_add(Set &set, s7_pointer arg)
     return arg;
 }
 
-s7_pointer do_stuff(s7_scheme *sc, int64_t x)
-{
-    if (x > 100) {
-        return s7_wrong_type_arg_error(sc, "do-stuff", 0, s7_make_integer(sc, x), "int");
-    }
-    return s7_make_integer(sc, x + 2);
-}
-
 void test_define_function()
 {
     s7::s7 scheme;
     scheme.define_function("add-double", "doc", add_double);
     scheme.define_function("add-int", "doc", add_int);
-    // scheme.define_function("str-test", "doc", print_append);
-    // scheme.define_function("index-of-vec", "doc", find);
-    // scheme.define_function("add1", "doc", add1);
-    // scheme.define_function("do-stuff", "doc", do_stuff);
+    scheme.define_function("str-test", "doc", print_append);
+    scheme.define_function("index-of-vec", "doc", find);
+    scheme.define_function("add1", "doc", add1);
 
     int64_t x = 0;
     scheme.define_function("inc", "doc", [&]() -> void { x++; });
@@ -176,7 +161,7 @@ void test_set()
 {
     s7::s7 scheme;
     scheme.make_c_type<Set>("set");
-    // scheme.define_function("set-add!", "(set-add! set value) adds value to set", set_add);
+    scheme.define_function("set-add!", "(set-add! set value) adds value to set", set_add);
     scheme.define_function("set-add!", "doc", &Set::add);
     scheme.repl();
 }
@@ -186,7 +171,7 @@ int main()
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
-    // test_define_function();
-    test_set();
+    test_define_function();
+    // test_set();
 }
 
