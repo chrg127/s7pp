@@ -88,8 +88,8 @@ int64_t find(std::span<s7_int> vec, int64_t obj)
 struct Set {
     std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
 
-    explicit Set(s7_scheme *sc)
-        : set(std::unordered_set<s7_pointer, s7::Hash, s7::Equal>(512, s7::Hash(sc), s7::Equal(sc))) {}
+    explicit Set(s7::s7 &scheme)
+        : set(std::unordered_set<s7_pointer, s7::Hash, s7::Equal>(512, s7::Hash(scheme.sc), s7::Equal(scheme.sc))) {}
 
     Set(const Set &) = delete;
     Set & operator=(const Set &) = delete;
@@ -161,8 +161,7 @@ void test_set()
 {
     s7::s7 scheme;
     scheme.make_c_type<Set>("set");
-    scheme.define_function("set-add!", "(set-add! set value) adds value to set", set_add);
-    scheme.define_function("set-add!", "doc", &Set::add);
+    scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
     scheme.repl();
 }
 
@@ -171,7 +170,7 @@ int main()
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
-    test_define_function();
-    // test_set();
+    // test_define_function();
+    test_set();
 }
 
