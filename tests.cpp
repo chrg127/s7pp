@@ -6,7 +6,7 @@
 
 void test_scheme_defined_function()
 {
-    s7::s7 scheme;
+    s7::Scheme scheme;
     scheme["an-integer"] = 1;
     scheme.eval("(define (add1 a) (+ a 1))");
     auto x = scheme["an-integer"].as_opt<int64_t>();
@@ -18,7 +18,7 @@ void test_scheme_defined_function()
     printf("%s\n", std::format("(add1 2): {}", res).c_str());
 
     auto fn = [](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
-        auto &scheme = *reinterpret_cast<s7::s7 *>(&sc);
+        auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
         auto args = s7::List(_args);
         auto sym = s7_symbol_table_find_name(scheme.sc, scheme.to<const char *>(args[0]));
         printf("%p\n", static_cast<void *>(sym));
@@ -32,7 +32,7 @@ void test_scheme_defined_function()
 
 s7_pointer add1(s7_scheme *sc, s7_pointer _args)
 {
-    auto &scheme = *reinterpret_cast<s7::s7 *>(&sc);
+    auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
     auto args = s7::List(_args);
     printf("add1 called\n");
     if (args.size() != 1) {
@@ -52,7 +52,7 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
 
 void test_c_defined_function()
 {
-    s7::s7 scheme;
+    s7::Scheme scheme;
     // scheme.define_function("add1", "(add1 int): adds 1 to int", add1);
     scheme.define("my-pi", 3.14159265);
     scheme.repl();
@@ -60,7 +60,7 @@ void test_c_defined_function()
 
 void test_conversion()
 {
-    s7::s7 scheme;
+    s7::Scheme scheme;
     auto sym = scheme.define("a-list", scheme.list(1, 2, 3));
     printf("defined %s\n", scheme.to_string(sym).data());
     scheme.repl();
@@ -88,20 +88,20 @@ int64_t find(std::span<s7_int> vec, int64_t obj)
 struct Set {
     std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
 
-    explicit Set(s7::s7 &scheme)
+    explicit Set(s7::Scheme &scheme)
         : set(std::unordered_set<s7_pointer, s7::Hash, s7::Equal>(512, s7::Hash(scheme.sc), s7::Equal(scheme.sc))) {}
 
     Set(const Set &) = delete;
     Set & operator=(const Set &) = delete;
 
-    void gc_mark(s7::s7 &scheme)
+    void gc_mark(s7::Scheme &scheme)
     {
         for (s7_pointer value : set) {
             scheme.mark(value);
         }
     }
 
-    std::string to_string(s7::s7 &scheme)
+    std::string to_string(s7::Scheme &scheme)
     {
         std::string str = "#<set(";
         for (const s7_pointer &value : set) {
@@ -135,7 +135,7 @@ s7_pointer set_add(Set &set, s7_pointer arg)
 
 void test_define_function()
 {
-    s7::s7 scheme;
+    s7::Scheme scheme;
     scheme.define_function("add-double", "doc", add_double);
     scheme.define_function("add-int", "doc", add_int);
     scheme.define_function("str-test", "doc", print_append);
@@ -159,9 +159,22 @@ void test_define_function()
 
 void test_set()
 {
-    s7::s7 scheme;
+    s7::Scheme scheme;
     scheme.make_c_type<Set>("set");
     scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
+    scheme.repl();
+}
+
+struct v2 {
+    float x, y;
+};
+
+void test_v2()
+{
+    s7::Scheme scheme;
+    scheme.make_c_type<v2>("v2");
+    scheme.define_function("v2-x", "doc", [](v2 &v) -> float { return v.x; });
+    scheme.define_function("v2-y", "doc", [](v2 &v) -> float { return v.y; });
     scheme.repl();
 }
 
@@ -171,6 +184,7 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
+    // test_set();
+    test_v2();
 }
 

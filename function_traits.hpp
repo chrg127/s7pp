@@ -3,6 +3,25 @@
 #include <utility>
 #include <tuple>
 
+namespace detail {
+
+    template <typename T> struct remove_class { };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...)>                { using type = R(A...); };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...) const>          { using type = R(A...); };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...) volatile>       { using type = R(A...); };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...) const volatile> { using type = R(A...); };
+
+    template <typename T>
+    struct get_signature_impl {
+        using type = typename remove_class<
+            decltype(&std::remove_reference_t<T>::operator())
+        >::type;
+    };
+
+    template <typename T>
+    using get_signature = typename get_signature_impl<T>::type;
+} // namespace detail
+
 template <typename F>
 struct FunctionTraits;
 
@@ -13,7 +32,7 @@ struct FunctionTraits<R(*)(Args...)> : public FunctionTraits<R(Args...)>
 template <typename R, typename... Args>
 struct FunctionTraits<R(Args...)> {
     using ReturnType = R;
-    using FunSig = R(Args...);
+    using Signature = R(Args...);
 
     static constexpr std::size_t arity = sizeof...(Args);
 
@@ -39,9 +58,13 @@ struct FunctionTraits<R(C::*)()> : public FunctionTraits<R(C&)> {};
 // functor
 template <typename F>
 struct FunctionTraits {
+private:
     using CallType = FunctionTraits<decltype(&F::operator())>;
+
+public:
     using ReturnType = typename CallType::ReturnType;
-    using FunSig = CallType::FunSig;
+    // remove class for lambdas
+    using Signature = detail::get_signature<F>;
 
     static constexpr std::size_t arity = CallType::arity - 1;
 
