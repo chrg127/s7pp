@@ -178,6 +178,15 @@ void test_v2()
     scheme.repl();
 }
 
+void test_star_fns()
+{
+    s7::Scheme scheme;
+    scheme.define_star_function("add", "a (b 1)", "doc", [](s7_int a, s7_int b) {
+        return a + b;
+    });
+    scheme.repl();
+}
+
 int main()
 {
     // test_scheme_defined_function();
@@ -185,6 +194,7 @@ int main()
     // test_conversion();
     // test_define_function();
     // test_set();
-    test_v2();
+    // test_v2();
+    test_star_fns();
 }
 
