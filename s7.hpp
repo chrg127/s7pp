@@ -247,6 +247,11 @@ struct Scheme {
     }
 
     /* gc stuff */
+    void protect(s7_pointer p)
+    {
+        s7_gc_protect(sc, p);
+    }
+
     void mark(s7_pointer p)
     {
         s7_mark(p);
@@ -622,6 +627,16 @@ public:
         return define_star_function(name, arglist_desc, doc, f);
     }
 
+    // template <typename R>
+    // void define_vararg_function(std::string_view name, std::string_view doc, R (*fptr)(List args))
+    // {
+    //     auto _name = s7_string(save_string(name));
+    //     detail::LambdaTable<Lambda>::lambda = fptr;
+    //     detail::LambdaTable<Lambda>::name
+    //         .insert_or_assign(reinterpret_cast<uintptr_t>(sc), _name);
+    //     auto f = make_s7_function(
+    // }
+
     /* usertypes */
     template <typename T>
     void make_c_type(std::string_view name)
@@ -687,6 +702,37 @@ public:
                 return s7_make_boolean(sc, *pa == *pb);
             });
         }
+
+        if constexpr(requires(T t) { t.size(); }) {
+            s7_c_type_set_length(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
+                T *o = reinterpret_cast<T *>(obj);
+                return o->size();
+            });
+        }
+
+        if constexpr(requires(T t) { t.to_list(); }) {
+            s7_c_type_set_to_list(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
+                Scheme &scheme = *reinterpret_cast<Scheme *>(&sc);
+                T *o = reinterpret_cast<T *>(obj);
+                // incomplete
+                return scheme.mklist();
+            });
+        }
+
+        if constexpr(requires(T t) { t.operator[]; }) {
+            s7_c_type_set_ref(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            });
+
+            s7_c_type_set_set(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            });
+        }
+
+        // s7_c_type_set_is_equivalent
+        // s7_c_type_set_copy
+        // s7_c_type_set_fill
+        // s7_c_type_set_reverse
+        // s7_c_type_set_getter
+        // s7_c_type_set_setter
 
         if constexpr(requires(T t) { t.to_string(); }) {
             s7_c_type_set_to_string(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
