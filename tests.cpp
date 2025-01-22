@@ -166,15 +166,22 @@ void test_set()
 }
 
 struct v2 {
-    float x, y;
+    double x, y;
+
+    double &operator[](s7_int i) { return i == 0 ? x : y; }
+
+    std::string to_string()
+    {
+        return std::format("v2({}, {})", x, y);
+    }
 };
 
 void test_v2()
 {
     s7::Scheme scheme;
     scheme.make_c_type<v2>("v2");
-    scheme.define_function("v2-x", "doc", [](v2 &v) -> float { return v.x; });
-    scheme.define_function("v2-y", "doc", [](v2 &v) -> float { return v.y; });
+    scheme.define_function("v2-x", "doc", [](v2 &v) -> double { return v.x; });
+    scheme.define_function("v2-y", "doc", [](v2 &v) -> double { return v.y; });
     scheme.repl();
 }
 
@@ -193,8 +200,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
-    // test_v2();
+    // test_set();
+    test_v2();
     // test_star_fns();
 }
 

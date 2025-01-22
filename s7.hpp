@@ -661,30 +661,30 @@ public:
             });
         }
 
-        if constexpr(requires(T t) { t.gc_mark(*this); }) {
-            s7_c_type_set_gc_mark(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
-                Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
-                T *o = reinterpret_cast<T *>(obj);
-                o->gc_mark(*scheme);
-                return nullptr;
-            });
-        }
+        // if constexpr(requires(T t) { t.gc_mark(*this); }) {
+        //     s7_c_type_set_gc_mark(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
+        //         Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
+        //         T *o = reinterpret_cast<T *>(obj);
+        //         o->gc_mark(*scheme);
+        //         return nullptr;
+        //     });
+        // }
 
-        if constexpr(requires(T t) { t.gc_free(*this); }) {
-            s7_c_type_set_gc_free(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
-                Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
-                T *o = reinterpret_cast<T *>(obj);
-                o->gc_free(*scheme);
-                delete o;
-                return nullptr;
-            });
-        } else {
-            s7_c_type_set_gc_free(sc, tag, [](s7_scheme *, s7_pointer obj) -> s7_pointer {
-                T *o = reinterpret_cast<T *>(obj);
-                delete o;
-                return nullptr;
-            });
-        }
+        // if constexpr(requires(T t) { t.gc_free(*this); }) {
+        //     s7_c_type_set_gc_free(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
+        //         Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
+        //         T *o = reinterpret_cast<T *>(obj);
+        //         o->gc_free(*scheme);
+        //         delete o;
+        //         return nullptr;
+        //     });
+        // } else {
+        //     s7_c_type_set_gc_free(sc, tag, [](s7_scheme *, s7_pointer obj) -> s7_pointer {
+        //         T *o = reinterpret_cast<T *>(obj);
+        //         delete o;
+        //         return nullptr;
+        //     });
+        // }
 
         if constexpr(requires(T a, T b) { a == b; }) {
             s7_c_type_set_is_equal(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
@@ -710,20 +710,45 @@ public:
             });
         }
 
-        if constexpr(requires(T t) { t.to_list(); }) {
-            s7_c_type_set_to_list(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
-                Scheme &scheme = *reinterpret_cast<Scheme *>(&sc);
-                T *o = reinterpret_cast<T *>(obj);
-                // incomplete
-                return scheme.mklist();
-            });
-        }
+        // if constexpr(requires(T t) { t.to_list(); }) {
+        //     s7_c_type_set_to_list(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
+        //         Scheme &scheme = *reinterpret_cast<Scheme *>(&sc);
+        //         T *o = reinterpret_cast<T *>(obj);
+        //         // incomplete
+        //         return scheme.mklist();
+        //     });
+        // }
 
-        if constexpr(requires(T t) { t.operator[]; }) {
+        if constexpr(requires() { &T::operator[]; }) {
             s7_c_type_set_ref(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+                auto &scheme = *reinterpret_cast<Scheme *>(&sc);
+                auto *obj = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)));
+                using ArgType = typename FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
+                auto arg = s7_cadr(args);
+                if (!scheme.is<ArgType>(arg)) {
+                    return s7_wrong_type_arg_error(sc, "T ref", 1, arg,
+                        scheme.type_to_string<ArgType>());
+                }
+                return scheme.from((*obj)[scheme.to<ArgType>(arg)]);
             });
 
             s7_c_type_set_set(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+                auto &scheme = *reinterpret_cast<Scheme *>(&sc);
+                auto *obj = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)));
+                using IndexType = typename FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
+                using ValueType = std::remove_cvref_t<typename FunctionTraits<decltype(&T::operator[])>::ReturnType>;
+                auto index = s7_cadr(args);
+                if (!scheme.is<IndexType>(index)) {
+                    return s7_wrong_type_arg_error(sc, "T ref", 1, index,
+                        scheme.type_to_string<IndexType>());
+                }
+                auto value = s7_caddr(args);
+                if (!scheme.is<ValueType>(value)) {
+                    return s7_wrong_type_arg_error(sc, "T ref", 2, value,
+                        scheme.type_to_string<ValueType>());
+                }
+                (*obj)[scheme.to<IndexType>(index)] = scheme.to<ValueType>(value);
+                return s7_undefined(sc);
             });
         }
 
