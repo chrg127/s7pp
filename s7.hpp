@@ -377,6 +377,8 @@ struct Scheme {
         return List(s7_cons(sc, this->from<T>(arg), list(args...).ptr()));
     }
 
+    List list() { return s7::List(s7_nil(sc)); }
+
     /* errors */
     template <typename T>
     s7_pointer error(T data)
