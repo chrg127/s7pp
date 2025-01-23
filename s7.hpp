@@ -197,6 +197,11 @@ struct FunctionOpts {
     bool unsafe_arglist;
 };
 
+enum class Op {
+    Equal, Equivalent, Copy, Fill, Reverse, GcMark, GcFree,
+    Length, ToString, ToList, Ref, Set,
+};
+
 struct Scheme {
     s7_scheme *sc;
 
@@ -474,6 +479,12 @@ public:
         return s7_make_signature(sc, sizeof...(Args) + 1, sig_output_type<R>(), sig_type<Args>()...);
     }
 
+    template <typename F>
+    s7_pointer make_signature(F &&)
+    {
+        return make_signature(&std::remove_cvref_t<F>::operator());
+    }
+
     /* calling functions */
     template <typename... T>
     s7_pointer call(std::string_view name, T&&... args)
@@ -484,7 +495,7 @@ public:
     /* function creation */
 private:
     template <typename L, typename R, typename... Args>
-    s7_function make_s7_function()
+    s7_function _make_s7_function()
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
@@ -526,15 +537,43 @@ private:
     }
 
     template <typename L, typename R, typename... Args>
-    s7_function make_s7_function(R (L::*)(Args...) const)
+    s7_function _make_s7_function(R (L::*)(Args...) const)
     {
-        return make_s7_function<L, R, Args...>();
+        return _make_s7_function<L, R, Args...>();
     }
 
     template <typename L, typename R, typename... Args>
-    s7_function make_s7_function(R (L::*)(Args...))
+    s7_function _make_s7_function(R (L::*)(Args...))
     {
-        return make_s7_function<L, R, Args...>();
+        return _make_s7_function<L, R, Args...>();
+    }
+
+    template <typename L>
+    s7_function make_s7_function(const char *name, L&& lambda)
+    {
+        using Lambda = std::remove_cvref_t<L>;
+        detail::LambdaTable<Lambda>::lambda = lambda;
+        detail::LambdaTable<Lambda>::name
+            .insert_or_assign(reinterpret_cast<uintptr_t>(sc), name);
+        return _make_s7_function(&Lambda::operator());
+    }
+
+    template <typename R, typename... Args>
+    s7_function make_s7_function(const char *name, R (*fptr)(Args...))
+    {
+        return make_s7_function(name, [=](Args... args) -> R { return fptr(args...); });
+    }
+
+    template <typename C, typename R, typename... Args>
+    s7_function make_s7_function(const char *name, R (C::*fptr)(Args...))
+    {
+        return make_s7_function(name, [=](C &c, Args... args) -> R { return ((&c)->*fptr)(args...); });
+    }
+
+    template <typename C, typename R, typename... Args>
+    s7_function make_s7_function(const char *name, R (C::*fptr)(Args...) const)
+    {
+        return make_s7_function(name, [=](const C &c, Args... args) -> R { return ((&c)->*fptr)(args...); });
     }
 
 public:
@@ -542,91 +581,34 @@ public:
     s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn,
         FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
     {
+        auto _name = s7_string(save_string(name));
         auto define = opts.unsafe_arglist || opts.unsafe_body
             ? s7_define_function
             : s7_define_safe_function;
-        return define(sc, name.data(), fn, 0, 0, true, doc.data());
+        return define(sc, _name, fn, 0, 0, true, doc.data());
     }
 
-    template <typename L>
-    s7_pointer define_function(std::string_view name, std::string_view doc, L&& lambda,
+    template <typename F>
+    s7_pointer define_function(std::string_view name, std::string_view doc, F &&func,
         FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
     {
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
         auto _name = s7_string(save_string(name));
-        constexpr auto NumArgs = FunctionTraits<L>::arity;
-        using Lambda = std::remove_cvref_t<L>;
-        detail::LambdaTable<Lambda>::lambda = lambda;
-        detail::LambdaTable<Lambda>::name
-            .insert_or_assign(reinterpret_cast<uintptr_t>(sc), _name);
-        auto f = make_s7_function(&std::remove_cvref_t<L>::operator());
+        auto f = make_s7_function(_name, func);
         auto define = opts.unsafe_body && opts.unsafe_arglist ? s7_define_unsafe_typed_function
                     : opts.unsafe_body                        ? s7_define_semisafe_typed_function
                     :                                           s7_define_typed_function;
-        return define(
-            sc, _name, f, NumArgs, 0, false, doc.data(),
-            make_signature(&std::remove_cvref_t<L>::operator())
-        );
+        auto sig = make_signature(func);
+        return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
     }
 
-    template <typename R, typename... Args>
-    s7_pointer define_function(std::string_view name, std::string_view doc, R (*fptr)(Args...),
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
-    {
-        auto f = [=](Args... args) -> R { return fptr(args...); };
-        return define_function(name, doc, f, opts);
-    }
-
-    template <typename C, typename R, typename... Args>
-    s7_pointer define_function(std::string_view name, std::string_view doc, R (C::*fptr)(Args...),
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
-    {
-        auto f = [=](C &c, Args... args) -> R { return ((&c)->*fptr)(args...); };
-        return define_function(name, doc, f, opts);
-    }
-
-    template <typename C, typename R, typename... Args>
-    s7_pointer define_function(std::string_view name, std::string_view doc, R (C::*fptr)(Args...) const,
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
-    {
-        auto f = [=](const C &c, Args... args) -> R { return ((&c)->*fptr)(args...); };
-        return define_function(name, doc, f, opts);
-    }
-
-    template <typename L>
-    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, L&& lambda)
+    template <typename F>
+    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
     {
         auto _name = s7_string(save_string(name));
-        using Lambda = std::remove_cvref_t<L>;
-        detail::LambdaTable<Lambda>::lambda = lambda;
-        detail::LambdaTable<Lambda>::name.insert_or_assign(
-            reinterpret_cast<uintptr_t>(sc), _name
-        );
-        auto f = make_s7_function(&std::remove_cvref_t<L>::operator());
-        s7_define_typed_function_star(
-            sc, _name, f, arglist_desc.data(), doc.data(),
-            make_signature(&std::remove_cvref_t<L>::operator())
-        );
-    }
-
-    template <typename R, typename... Args>
-    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, R (*fptr)(Args...))
-    {
-        auto f = [=](Args... args) -> R { return fptr(args...); };
-        return define_star_function(name, arglist_desc, doc, f);
-    }
-
-    template <typename C, typename R, typename... Args>
-    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, R (C::*fptr)(Args...))
-    {
-        auto f = [=](C &c, Args... args) -> R { return ((&c)->*fptr)(args...); };
-        return define_star_function(name, arglist_desc, doc, f);
-    }
-
-    template <typename C, typename R, typename... Args>
-    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, R (C::*fptr)(Args...) const)
-    {
-        auto f = [=](const C &c, Args... args) -> R { return ((&c)->*fptr)(args...); };
-        return define_star_function(name, arglist_desc, doc, f);
+        auto f = make_s7_function(_name, func);
+        auto sig = make_signature(func);
+        s7_define_typed_function_star(sc, _name, f, arglist_desc.data(), doc.data(), sig);
     }
 
     // template <typename R>
@@ -641,7 +623,7 @@ public:
 
     /* usertypes */
     template <typename T>
-    void make_c_type(std::string_view name)
+    s7_int make_c_type(std::string_view name)
     {
         auto tag = s7_make_c_type(sc, name.data());
         detail::TypeTag<T>::tags
@@ -663,30 +645,11 @@ public:
             });
         }
 
-        // if constexpr(requires(T t) { t.gc_mark(*this); }) {
-        //     s7_c_type_set_gc_mark(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
-        //         Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
-        //         T *o = reinterpret_cast<T *>(obj);
-        //         o->gc_mark(*scheme);
-        //         return nullptr;
-        //     });
-        // }
-
-        // if constexpr(requires(T t) { t.gc_free(*this); }) {
-        //     s7_c_type_set_gc_free(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
-        //         Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
-        //         T *o = reinterpret_cast<T *>(obj);
-        //         o->gc_free(*scheme);
-        //         delete o;
-        //         return nullptr;
-        //     });
-        // } else {
-        //     s7_c_type_set_gc_free(sc, tag, [](s7_scheme *, s7_pointer obj) -> s7_pointer {
-        //         T *o = reinterpret_cast<T *>(obj);
-        //         delete o;
-        //         return nullptr;
-        //     });
-        // }
+        s7_c_type_set_gc_free(sc, tag, [](s7_scheme *, s7_pointer obj) -> s7_pointer {
+            T *o = reinterpret_cast<T *>(s7_c_object_value(obj));
+            delete o;
+            return nullptr;
+        });
 
         if constexpr(requires(T a, T b) { a == b; }) {
             s7_c_type_set_is_equal(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
@@ -711,15 +674,6 @@ public:
                 return o->size();
             });
         }
-
-        // if constexpr(requires(T t) { t.to_list(); }) {
-        //     s7_c_type_set_to_list(sc, tag, [](s7_scheme *sc, s7_pointer obj) -> s7_pointer {
-        //         Scheme &scheme = *reinterpret_cast<Scheme *>(&sc);
-        //         T *o = reinterpret_cast<T *>(obj);
-        //         // incomplete
-        //         return scheme.mklist();
-        //     });
-        // }
 
         if constexpr(requires() { &T::operator[]; }) {
             s7_c_type_set_ref(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
@@ -754,26 +708,6 @@ public:
             });
         }
 
-        // s7_c_type_set_is_equivalent
-        // s7_c_type_set_copy
-        // s7_c_type_set_fill
-        // s7_c_type_set_reverse
-        // s7_c_type_set_getter
-        // s7_c_type_set_setter
-
-        if constexpr(requires(T t) { t.to_string(); }) {
-            s7_c_type_set_to_string(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-                auto str = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)))->to_string();
-                return s7_make_string(sc, str.c_str());
-            });
-        } else if constexpr(requires(T t) { t.to_string(*this); }) {
-            s7_c_type_set_to_string(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-                Scheme *scheme = reinterpret_cast<Scheme *>(&sc);
-                auto str = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)))->to_string(*scheme);
-                return s7_make_string(sc, str.c_str());
-            });
-        }
-
         auto is_name = std::format("{}?", name);
         auto is_doc  = std::format("({}? value) checks if value is a {}", name, name);
         auto is = [](s7_scheme *sc, s7_pointer args) {
@@ -781,6 +715,29 @@ public:
             return scheme.from<bool>(scheme.is<T>(s7_car(args)));
         };
         s7_define_function(sc, s7_string(save_string(is_name)), is, 1, 0, false, is_doc.c_str());
+
+        return tag;
+    }
+
+    template <typename T, typename F, typename... Args>
+    void make_c_type(std::string_view name, std::pair<Op, F> op, Args&&... args)
+    {
+        auto tag = make_c_type<T, Args...>(name, args...);
+        auto set_func = op.first == Op::Equal    ? s7_c_type_set_is_equal
+                      : op.first == Op::Copy     ? s7_c_type_set_copy
+                      : op.first == Op::Fill     ? s7_c_type_set_fill
+                      : op.first == Op::Reverse  ? s7_c_type_set_reverse
+                      : op.first == Op::GcMark   ? s7_c_type_set_gc_mark
+                      : op.first == Op::GcFree   ? s7_c_type_set_gc_free
+                      : op.first == Op::Length   ? s7_c_type_set_length
+                      : op.first == Op::ToString ? s7_c_type_set_to_string
+                      : op.first == Op::ToList   ? s7_c_type_set_to_list
+                      : op.first == Op::Ref      ? s7_c_type_set_ref
+                      :                            s7_c_type_set_set;
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        auto f = make_s7_function(_name, op.second);
+        set_func(sc, tag, f);
     }
 
     /* utilities */

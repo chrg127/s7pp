@@ -53,7 +53,7 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
 void test_c_defined_function()
 {
     s7::Scheme scheme;
-    // scheme.define_function("add1", "(add1 int): adds 1 to int", add1);
+    scheme.define_function("add1", "(add1 int): adds 1 to int", add1);
     scheme.define("my-pi", 3.14159265);
     scheme.repl();
 }
@@ -160,7 +160,9 @@ void test_define_function()
 void test_set()
 {
     s7::Scheme scheme;
-    scheme.make_c_type<Set>("set");
+    scheme.make_c_type<Set>("set",
+        std::make_pair(s7::Op::ToString, &Set::to_string)
+    );
     scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
     scheme.repl();
 }
@@ -200,8 +202,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    // test_set();
-    test_v2();
+    test_set();
+    // test_v2();
     // test_star_fns();
 }
 
