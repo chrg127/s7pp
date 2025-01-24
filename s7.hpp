@@ -315,7 +315,7 @@ struct Scheme {
                        || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_make_integer(sc, x); }
         else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) { return s7_make_real(sc, x); }
         else if constexpr(std::is_same_v<std::decay_t<std::remove_cvref_t<T>>, char *>) { return s7_make_string(sc, x); }
-        else if constexpr(std::is_same_v<std::remove_cvref<T>, std::string>) { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>) { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
         else if constexpr(std::is_same_v<T, std::string_view>) { return s7_make_string_with_length(sc, x.data(), x.size()); }
         else if constexpr(std::is_same_v<T, unsigned char>) { return s7_make_character(sc, x); }
         else if constexpr(std::is_same_v<T, std::span<s7_pointer>> || std::is_same_v<T, std::vector<s7_pointer>>) {
@@ -444,7 +444,7 @@ private:
                        || std::is_same_v<T, short>  || std::is_same_v<T, long>) { return f("integer?"); }
         else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) { return f("real?"); }
         else if constexpr(std::is_same_v<std::decay_t<std::remove_cvref_t<T>>, char *>) { return f("string?"); }
-        else if constexpr(std::is_same_v<std::remove_cvref<T>, std::string>) { return f("string?"); }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>) { return f("string?"); }
         else if constexpr(std::is_same_v<T, unsigned char>) { return f("character?"); }
         else if constexpr(std::is_same_v<T, std::span<s7_pointer>>
                        || std::is_same_v<T, std::vector<s7_pointer>>) { return f("vector?"); }
@@ -720,23 +720,23 @@ public:
     }
 
     template <typename T, typename F, typename... Args>
-    void make_c_type(std::string_view name, std::pair<Op, F> op, Args&&... args)
+    void make_c_type(std::string_view name, Op op, F &&fn, Args&&... args)
     {
         auto tag = make_c_type<T, Args...>(name, args...);
-        auto set_func = op.first == Op::Equal    ? s7_c_type_set_is_equal
-                      : op.first == Op::Copy     ? s7_c_type_set_copy
-                      : op.first == Op::Fill     ? s7_c_type_set_fill
-                      : op.first == Op::Reverse  ? s7_c_type_set_reverse
-                      : op.first == Op::GcMark   ? s7_c_type_set_gc_mark
-                      : op.first == Op::GcFree   ? s7_c_type_set_gc_free
-                      : op.first == Op::Length   ? s7_c_type_set_length
-                      : op.first == Op::ToString ? s7_c_type_set_to_string
-                      : op.first == Op::ToList   ? s7_c_type_set_to_list
-                      : op.first == Op::Ref      ? s7_c_type_set_ref
+        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
+                      : op == Op::Copy     ? s7_c_type_set_copy
+                      : op == Op::Fill     ? s7_c_type_set_fill
+                      : op == Op::Reverse  ? s7_c_type_set_reverse
+                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
+                      : op == Op::GcFree   ? s7_c_type_set_gc_free
+                      : op == Op::Length   ? s7_c_type_set_length
+                      : op == Op::ToString ? s7_c_type_set_to_string
+                      : op == Op::ToList   ? s7_c_type_set_to_list
+                      : op == Op::Ref      ? s7_c_type_set_ref
                       :                            s7_c_type_set_set;
         auto func_name = std::format("{}-op", name);
         auto _name = s7_string(save_string(func_name));
-        auto f = make_s7_function(_name, op.second);
+        auto f = make_s7_function(_name, fn);
         set_func(sc, tag, f);
     }
 

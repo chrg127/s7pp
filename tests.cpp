@@ -160,8 +160,11 @@ void test_define_function()
 void test_set()
 {
     s7::Scheme scheme;
+    auto to_str = [&scheme](Set &set) -> std::string {
+        return set.to_string(scheme);
+    };
     scheme.make_c_type<Set>("set",
-        std::make_pair(s7::Op::ToString, &Set::to_string)
+        s7::Op::ToString, to_str
     );
     scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
     scheme.repl();
@@ -181,9 +184,9 @@ struct v2 {
 void test_v2()
 {
     s7::Scheme scheme;
-    scheme.make_c_type<v2>("v2");
-    scheme.define_function("v2-x", "doc", [](v2 &v) -> double { return v.x; });
-    scheme.define_function("v2-y", "doc", [](v2 &v) -> double { return v.y; });
+    scheme.make_c_type<v2>("v2",
+        s7::Op::ToString, &v2::to_string
+    );
     scheme.repl();
 }
 
@@ -202,8 +205,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
-    // test_v2();
+    // test_set();
+    test_v2();
     // test_star_fns();
 }
 
