@@ -184,6 +184,11 @@ struct v2 {
 void test_v2()
 {
     s7::Scheme scheme;
+    auto ctor1 = []() -> v2 { return v2 { .x = 0, .y = 0 }; };
+    auto ctor2 = [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; };
+    auto ctor = scheme.make_constructor(ctor1, ctor2);
+    scheme.define_function("v2", "doc", ctor);
+
     scheme.make_c_type<v2>("v2",
         s7::Op::ToString, &v2::to_string
     );
@@ -196,6 +201,14 @@ void test_star_fns()
     scheme.define_star_function("add", "a (b 1)", "doc", [](s7_int a, s7_int b) {
         return a + b;
     });
+    scheme.repl();
+}
+
+void test_from()
+{
+    s7::Scheme scheme;
+    const char *s = "test";
+    scheme["a-string"] = scheme.from(s);
     scheme.repl();
 }
 

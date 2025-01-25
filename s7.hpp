@@ -202,6 +202,23 @@ enum class Op {
     Length, ToString, ToList, Ref, Set,
 };
 
+const char *object_type_to_string(s7_pointer p)
+{
+         if (s7_is_boolean(p))      { return "boolean"; }
+    else if (s7_is_integer(p))      { return "integer"; }
+    else if (s7_is_real(p))         { return "real"; }
+    else if (s7_is_string(p))       { return "string"; }
+    else if (s7_is_character(p))    { return "character"; }
+    else if (s7_is_vector(p))       { return "vector"; }
+    else if (s7_is_int_vector(p))   { return "int-vector"; }
+    else if (s7_is_float_vector(p)) { return "float-vector"; }
+    else if (s7_is_byte_vector(p))  { return "byte-vector"; }
+    else if (s7_is_c_pointer(p))    { return "c-pointer"; }
+    else if (s7_is_pair(p))         { return "list"; }
+    else if (s7_is_c_object(p))     { return "c-object"; }
+    else                            { return "unknown or unsupported type"; }
+}
+
 struct Scheme {
     s7_scheme *sc;
 
@@ -314,7 +331,8 @@ struct Scheme {
         else if constexpr(std::is_same_v<T, s7_int> || std::is_same_v<T, int>
                        || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_make_integer(sc, x); }
         else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) { return s7_make_real(sc, x); }
-        else if constexpr(std::is_same_v<std::decay_t<std::remove_cvref_t<T>>, char *>) { return s7_make_string(sc, x); }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<T>>, char *>) { return s7_make_string(sc, x); }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<T>>, const char *>) { return s7_make_string(sc, x); }
         else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>) { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
         else if constexpr(std::is_same_v<T, std::string_view>) { return s7_make_string_with_length(sc, x.data(), x.size()); }
         else if constexpr(std::is_same_v<T, unsigned char>) { return s7_make_character(sc, x); }
@@ -418,20 +436,20 @@ private:
     s7_pointer sig_type()
     {
         auto f = [&](auto s) { return s7_make_symbol(sc, s); };
-             if constexpr(std::is_same_v<T, s7_pointer>) { return s7_t(sc); }
-        else if constexpr(std::is_same_v<T, bool>) { return f("boolean?"); }
-        else if constexpr(std::is_same_v<T, s7_int>) { return f("integer?"); }
-        else if constexpr(std::is_same_v<T, double>) { return f("real?"); }
-        else if constexpr(std::is_same_v<T, const char *>) { return f("string?"); }
-        else if constexpr(std::is_same_v<T, std::string_view>) { return f("string?"); }
-        else if constexpr(std::is_same_v<T, char>) { return f("character?"); }
+             if constexpr(std::is_same_v<T, s7_pointer>)            { return s7_t(sc); }
+        else if constexpr(std::is_same_v<T, bool>)                  { return f("boolean?"); }
+        else if constexpr(std::is_same_v<T, s7_int>)                { return f("integer?"); }
+        else if constexpr(std::is_same_v<T, double>)                { return f("real?"); }
+        else if constexpr(std::is_same_v<T, const char *>)          { return f("string?"); }
+        else if constexpr(std::is_same_v<T, std::string_view>)      { return f("string?"); }
+        else if constexpr(std::is_same_v<T, char>)                  { return f("character?"); }
         else if constexpr(std::is_same_v<T, std::span<s7_pointer>>) { return f("vector?"); }
-        else if constexpr(std::is_same_v<T, std::span<s7_int>>) { return f("int-vector?"); }
-        else if constexpr(std::is_same_v<T, std::span<double>>) { return f("float-vector?"); }
-        else if constexpr(std::is_same_v<T, std::span<uint8_t>>) { return f("byte-vector?"); }
-        else if constexpr(std::is_pointer_v<T>) { return f("c-pointer?"); }
-        else if constexpr(std::is_same_v<T, List>) { return f("list?"); }
-        else { return f("c-object?"); }
+        else if constexpr(std::is_same_v<T, std::span<s7_int>>)     { return f("int-vector?"); }
+        else if constexpr(std::is_same_v<T, std::span<double>>)     { return f("float-vector?"); }
+        else if constexpr(std::is_same_v<T, std::span<uint8_t>>)    { return f("byte-vector?"); }
+        else if constexpr(std::is_pointer_v<T>)                     { return f("c-pointer?"); }
+        else if constexpr(std::is_same_v<T, List>)                  { return f("list?"); }
+        else                                                        { return f("c-object?"); }
     }
 
     template <typename T>
@@ -499,9 +517,6 @@ private:
     {
         constexpr auto NumArgs = FunctionTraits<L>::arity;
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto &fn = detail::LambdaTable<L>::lambda;
-            auto name = detail::LambdaTable<L>::name
-                .find(reinterpret_cast<uintptr_t>(sc))->second;
             auto &scheme = *reinterpret_cast<Scheme *>(&sc);
 
             auto arglist = List(args);
@@ -519,9 +534,12 @@ private:
                 auto i = first_wrong_type - bools.begin();
                 arglist = List(args);
                 auto types = std::array<const char *, NumArgs> { scheme.type_to_string<Args>()... };
+                auto name = detail::LambdaTable<L>::name
+                    .find(reinterpret_cast<uintptr_t>(sc))->second;
                 return s7_wrong_type_arg_error(sc, name, i+1, arglist[i], types[i]);
             }
 
+            auto &fn = detail::LambdaTable<L>::lambda;
             if constexpr(std::is_same_v<R, void>) {
                 [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                     fn(scheme.to<Args>(arr[Is])...);
@@ -576,7 +594,92 @@ private:
         return make_s7_function(name, [=](const C &c, Args... args) -> R { return ((&c)->*fptr)(args...); });
     }
 
+    template <typename F>
+    s7_pointer match_fn(Scheme &scheme, s7_int length, s7_pointer args)
+    {
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        if (length != NumArgs) {
+            return nullptr;
+        }
+
+        auto arglist = s7::List(args);
+        std::array<s7_pointer, NumArgs> arr;
+        for (std::size_t i = 0; i < NumArgs; i++) {
+            arr[i] = arglist.advance();
+        }
+
+        auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            return std::array<bool, NumArgs> {
+                scheme.is<typename FunctionTraits<F>::Argument<Is>::Type>(arr[Is])...
+            };
+        }(std::make_index_sequence<NumArgs>());
+        auto matches = std::find(bools.begin(), bools.end(), false) == bools.end();
+        if (!matches) {
+            return nullptr;
+        }
+
+        auto &fn = detail::LambdaTable<std::remove_cvref_t<F>>::lambda;
+        using R = FunctionTraits<F>::ReturnType;
+        if constexpr(std::is_same_v<R, void>) {
+            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                fn(scheme.to<typename FunctionTraits<F>::Argument<Is>::Type>(arr[Is])...);
+            }(std::make_index_sequence<NumArgs>());
+            return s7_undefined(sc);
+        } else {
+            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return fn(scheme.to<typename FunctionTraits<F>::Argument<Is>::Type>(arr[Is])...);
+            }(std::make_index_sequence<NumArgs>());
+            return scheme.from<R>(res);
+        }
+    }
+
+    template <typename F>
+    List type_list()
+    {
+        return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            return list(sig_type<typename FunctionTraits<F>::Argument<Is>::Type>()...);
+        }(std::make_index_sequence<FunctionTraits<F>::arity>());
+    }
+
+    s7_pointer make_message(int n)
+    {
+        auto str = std::string("no constructor found for argument types: ~a\n"
+                               ";valid constructors:");
+        for (auto i = 0; i < n; i++) {
+            str += "\n;~a";
+        }
+        return from(str);
+    }
+
 public:
+    template <typename... Fns>
+    s7_function make_constructor(Fns&&... fns)
+    {
+        auto set = []<typename F>(F &&fn) {
+            detail::LambdaTable<std::remove_cvref_t<F>>::lambda = fn;
+        };
+        (set(fns), ...);
+
+        return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            auto &scheme = *reinterpret_cast<Scheme *>(&sc);
+            auto length = s7_list_length(sc, args);
+            auto results = std::array { scheme.match_fn<Fns>(scheme, length, args)... };
+            auto it = std::find_if(results.begin(), results.end(), [](s7_pointer p) { return p != nullptr; });
+            if (it == results.end()) {
+                std::vector<s7_pointer> types;
+                for (auto arg : s7::List(args)) {
+                    types.push_back(s7_make_symbol(sc, object_type_to_string(arg)));
+                }
+                return s7_error(sc, s7_make_symbol(sc, "ctor-mismatch"), scheme.list(
+                        scheme.make_message(sizeof...(Fns)),
+                        s7_array_to_list(sc, types.size(), types.data()),
+                        scheme.type_list<Fns>().ptr()...
+                ).ptr());
+            }
+            return *it;
+        };
+    }
+
     // special case for functions that follow s7's standard signature
     s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn,
         FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
@@ -787,6 +890,7 @@ public:
         else if constexpr(std::is_same_v<T, List>) { return "list"; }
         else { return detail::get_type_name<T>(sc); }
     }
+
 };
 
 class Variable {
