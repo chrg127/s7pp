@@ -85,11 +85,21 @@ int64_t find(std::span<s7_int> vec, int64_t obj)
     return -1;
 }
 
+void test_define_function()
+{
+    s7::Scheme scheme;
+    scheme.define_function("add-double", "doc", add_double);
+    scheme.define_function("add-int", "doc", add_int);
+    scheme.define_function("print-append", "doc", print_append);
+    scheme.define_function("find-index", "doc", find);
+}
+
 struct Set {
     std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
 
     explicit Set(s7::Scheme &scheme)
-        : set(std::unordered_set<s7_pointer, s7::Hash, s7::Equal>(512, s7::Hash(scheme.sc), s7::Equal(scheme.sc))) {}
+        : set(512, s7::Hash(scheme.sc), s7::Equal(scheme.sc))
+    {}
 
     Set(const Set &) = delete;
     Set & operator=(const Set &) = delete;
@@ -112,6 +122,8 @@ struct Set {
     }
 
     s7_pointer add(s7_pointer p) { this->set.insert(p); return p; }
+
+    s7_int the_size() const { return 42; }
 };
 
 template <typename T>
@@ -127,44 +139,13 @@ bool operator==(const Set &a, const Set &b)
     return a.set.size() == b.set.size() && is_subset(a.set, b.set);
 }
 
-s7_pointer set_add(Set &set, s7_pointer arg)
-{
-    set.add(arg);
-    return arg;
-}
-
-void test_define_function()
-{
-    s7::Scheme scheme;
-    scheme.define_function("add-double", "doc", add_double);
-    scheme.define_function("add-int", "doc", add_int);
-    scheme.define_function("str-test", "doc", print_append);
-    scheme.define_function("index-of-vec", "doc", find);
-    scheme.define_function("add1", "doc", add1);
-
-    int64_t x = 0;
-    scheme.define_function("inc", "doc", [&]() -> void { x++; });
-    scheme.define_function("get", "doc", [&]() -> int64_t { return x; });
-
-    auto f = [i = 0]() mutable -> int64_t {
-        i++;
-        printf("i = %d\n", i);
-        return i;
-    };
-
-    scheme.define_function("inc2", "doc", f);
-
-    scheme.repl();
-}
-
 void test_set()
 {
     s7::Scheme scheme;
-    auto to_str = [&scheme](Set &set) -> std::string {
-        return set.to_string(scheme);
-    };
     scheme.make_c_type<Set>("set",
-        s7::Op::ToString, to_str
+        s7::Op::GcMark,   [&](Set &s) { return s.gc_mark(scheme); },
+        s7::Op::ToString, [&](Set &s) { return s.to_string(scheme); },
+        s7::Op::Length,   &Set::the_size
     );
     scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
     scheme.repl();
