@@ -189,14 +189,29 @@ void test_from()
     scheme.repl();
 }
 
+void test_varargs()
+{
+    s7::Scheme scheme;
+    scheme.define_varargs_function("add", "doc", [](s7::VarArgs<s7_int> args) -> s7_int {
+        s7_int sum = 0;
+        for (auto it = args.begin(); it != args.end(); ++it) {
+            auto arg = *it;
+            sum += arg;
+        }
+        return sum;
+    });
+    scheme.repl();
+}
+
 int main()
 {
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
+    // test_set();
     // test_v2();
     // test_star_fns();
+    test_varargs();
 }
 

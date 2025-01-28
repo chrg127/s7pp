@@ -34,8 +34,8 @@ public:
     s7_pointer car() const { return s7_car(p); }
     List cdr() const       { return List(s7_cdr(p)); }
     s7_pointer ptr() const { return p; }
-
-    s7_pointer advance() { auto tmp = s7_car(p); p = s7_cdr(p); return tmp; }
+    bool at_end()          { return !s7_is_pair(p); }
+    s7_pointer advance()   { auto tmp = s7_car(p); p = s7_cdr(p); return tmp; }
 
     std::size_t size() const
     {
@@ -55,9 +55,76 @@ public:
         iterator & operator++() { p = s7_cdr(p); return *this; }
         iterator operator++(int) { auto i = *this; p = s7_cdr(p); return i; }
         s7_pointer operator*() const { return s7_car(p); }
+
+        bool operator==(const iterator &i) const
+        {
+            auto is_nil   =   p == nullptr || !s7_is_pair(p);
+            auto i_is_nil = i.p == nullptr || !s7_is_pair(i.p);
+            return (is_nil && i_is_nil) || (!is_nil && !i_is_nil && s7_is_eq(p, i.p));
+        }
     };
 
     iterator begin() { return iterator(p); }
+    iterator end() { return iterator(); }
+};
+
+template <typename T>
+struct VarArgs {
+    s7_scheme *sc;
+    s7_pointer p;
+    const char *caller;
+    s7_int arg_n;
+
+public:
+    VarArgs(s7_scheme *sc, s7_pointer p, const char *caller)
+        : sc(sc), p(p), caller(caller), arg_n(1) {}
+
+    VarArgs(s7_scheme *sc, s7_pointer p, const char *caller, s7_int arg_n)
+        : sc(sc), p(p), caller(caller), arg_n(arg_n) {}
+
+    s7_pointer operator[](std::size_t i) const
+    {
+        s7_pointer x = this->p;
+        while (i-- > 0) {
+            x = s7_cdr(x);
+        }
+        return s7_car(x);
+    }
+
+    T car() const;
+    VarArgs cdr() const    { return VarArgs(sc, s7_cdr(p), caller, arg_n+1); }
+    s7_pointer ptr() const { return p; }
+    bool at_end()          { return !s7_is_pair(p); }
+    T advance()            { auto tmp = car(); p = s7_cdr(p); return tmp; }
+
+    std::size_t size() const
+    {
+        size_t s = 0;
+        for (auto p = this->p; s7_is_pair(p); p = s7_cdr(p), s++)
+            ;
+        return s;
+    }
+
+    struct iterator {
+        using value_type = T;
+
+        VarArgs va = VarArgs(nullptr, nullptr, nullptr);
+
+        iterator() = default;
+        explicit iterator(VarArgs va) : va(va) {}
+        iterator & operator++() { va = va.cdr(); return *this; }
+        iterator operator++(int) { auto i = *this; va = va.cdr(); return i; }
+        T operator*() const { return va.car(); }
+
+        bool operator==(const iterator &i) const
+        {
+            auto is_nil   =   va.p == nullptr || !s7_is_pair(va.p);
+            auto i_is_nil = i.va.p == nullptr || !s7_is_pair(i.va.p);
+            return (is_nil && i_is_nil) || (!is_nil && !i_is_nil && s7_is_eq(va.p, i.va.p));
+        }
+    };
+
+    iterator begin() { return iterator(*this); }
     iterator end() { return iterator(); }
 };
 
@@ -257,6 +324,7 @@ namespace detail {
         }
         return to<T>(sc, p);
     }
+
 } // namespace detail
 
 enum class Type {
@@ -347,10 +415,26 @@ Type to_s7_output_type()
     else                                                                                                { return Type::CObject; }
 }
 
-bool operator==(const List::iterator &a, const List::iterator &b)
+namespace detail {
+    template <typename T>
+    const char *c_type_to_string(s7_scheme *sc)
+    {
+        auto t = to_s7_type<T>();
+        return (t == Type::CObject) ? get_type_name<T>(sc) : type_to_string(t);
+    }
+}
+
+template <typename T>
+T VarArgs<T>::car() const
 {
-    return ((a.p == nullptr || !s7_is_pair(a.p)) && (b.p == nullptr || !s7_is_pair(b.p)))
-        || (a.p != nullptr && b.p != nullptr && s7_is_eq(a.p, b.p));
+    auto r = s7_car(p);
+    if (!detail::is<T>(sc, r)) {
+        // this is actually fine, since s7_wrong_type_arg_error is a
+        // noreturn function (despite not marked as such)
+        return detail::to<T>(sc, s7_wrong_type_arg_error(sc, caller, arg_n, r,
+                    detail::c_type_to_string<T>(sc)));
+    }
+    return detail::to<T>(sc, s7_car(p));
 }
 
 struct Equal {
@@ -554,6 +638,30 @@ struct Scheme {
         return make_signature(&std::remove_cvref_t<F>::operator());
     }
 
+    template <typename R, typename T>
+    s7_pointer make_varargs_signature(R (*)(VarArgs<T>))
+    {
+        return s7_make_circular_signature(sc, 0, 2, sig_type<R, true>(), sig_type<T>());
+    }
+
+    template <typename C, typename R, typename T>
+    s7_pointer make_varargs_signature(R (C::*)(VarArgs<T>))
+    {
+        return s7_make_circular_signature(sc, 1, 2, sig_type<R, true>(), sig_type<T>());
+    }
+
+    template <typename C, typename R, typename T>
+    s7_pointer make_varargs_signature(R (C::*)(VarArgs<T>) const)
+    {
+        return s7_make_circular_signature(sc, 1, 2, sig_type<R, true>(), sig_type<T>());
+    }
+
+    template <typename F>
+    s7_pointer make_varargs_signature(F &&)
+    {
+        return make_varargs_signature(&std::remove_cvref_t<F>::operator());
+    }
+
     /* calling functions */
     template <typename... T>
     s7_pointer call(std::string_view name, T&&... args)
@@ -609,6 +717,24 @@ private:
         };
     }
 
+    template <typename L, typename R, typename T>
+    s7_function _make_s7_varargs_function()
+    {
+        return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            auto &scheme = *reinterpret_cast<Scheme *>(&sc);
+            auto &fn = detail::LambdaTable<L>::lambda;
+            auto name = detail::LambdaTable<L>::name
+                .find(reinterpret_cast<uintptr_t>(sc))->second;
+            if constexpr(std::is_same_v<R, void>) {
+                fn(VarArgs(sc, args, name));
+                return s7_undefined(sc);
+            } else {
+                auto res = fn(VarArgs<T>(sc, args, name));
+                return scheme.from<R>(res);
+            }
+        };
+    }
+
     template <typename L, typename R, typename... Args>
     s7_function _make_s7_function(R (L::*)(Args...) const)
     {
@@ -619,6 +745,18 @@ private:
     s7_function _make_s7_function(R (L::*)(Args...))
     {
         return _make_s7_function<L, R, Args...>();
+    }
+
+    template <typename L, typename R, typename T>
+    s7_function _make_s7_function(R (L::*)(VarArgs<T>) const)
+    {
+        return _make_s7_varargs_function<L, R, T>();
+    }
+
+    template <typename L, typename R, typename T>
+    s7_function _make_s7_function(R (L::*)(VarArgs<T>))
+    {
+        return _make_s7_varargs_function<L, R, T>();
     }
 
     template <typename F>
@@ -670,6 +808,23 @@ private:
         }
     }
 
+    // varargs always matches... is it an error to allow it in ctors?
+    template <typename F, typename R, typename T>
+    s7_pointer match_varargs_fn(s7_int length, s7_pointer args)
+    {
+        auto &scheme = *reinterpret_cast<Scheme *>(&sc);
+        auto &fn = detail::LambdaTable<F>::lambda;
+        auto name = detail::LambdaTable<F>::name
+            .find(reinterpret_cast<uintptr_t>(sc))->second;
+        if constexpr(std::is_same_v<R, void>) {
+            fn(VarArgs(sc, args, name));
+            return s7_undefined(sc);
+        } else {
+            auto res = fn(VarArgs<T>(sc, args, name));
+            return scheme.from<R>(res);
+        }
+    }
+
     template <typename F, typename R, typename... Args>
     s7_pointer match_fn(s7_int length, s7_pointer args, R (F::*)(Args...))
     {
@@ -680,6 +835,18 @@ private:
     s7_pointer match_fn(s7_int length, s7_pointer args, R (F::*)(Args...) const)
     {
         return match_fn<F, R, Args...>(length, args);
+    }
+
+    template <typename F, typename R, typename T>
+    s7_pointer match_fn(s7_int length, s7_pointer args, R (F::*)(VarArgs<T>))
+    {
+        return match_varargs_fn<F, R, T>(length, args);
+    }
+
+    template <typename F, typename R, typename T>
+    s7_pointer match_fn(s7_int length, s7_pointer args, R (F::*)(VarArgs<T>) const)
+    {
+        return match_varargs_fn<F, R, T>(length, args);
     }
 
     template <typename T, bool output = false>
@@ -800,15 +967,18 @@ public:
         s7_define_typed_function_star(sc, _name, f, arglist_desc.data(), doc.data(), sig);
     }
 
-    // template <typename R>
-    // void define_vararg_function(std::string_view name, std::string_view doc, R (*fptr)(List args))
-    // {
-    //     auto _name = s7_string(save_string(name));
-    //     detail::LambdaTable<Lambda>::lambda = fptr;
-    //     detail::LambdaTable<Lambda>::name
-    //         .insert_or_assign(reinterpret_cast<uintptr_t>(sc), _name);
-    //     auto f = make_s7_function(
-    // }
+    template <typename F>
+    void define_varargs_function(std::string_view name, std::string_view doc, F &&func,
+            FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    {
+        auto _name = s7_string(save_string(name));
+        auto f = make_s7_function(_name, func);
+        auto define = opts.unsafe_body && opts.unsafe_arglist ? s7_define_unsafe_typed_function
+                    : opts.unsafe_body                        ? s7_define_semisafe_typed_function
+                    :                                           s7_define_typed_function;
+        auto sig = make_varargs_signature(func);
+        define(sc, _name, f, 0, 0, true, doc.data(), sig);
+    }
 
     template <typename T>
     s7_pointer make_c_object(T *p)
@@ -959,9 +1129,7 @@ public:
     template <typename T>
     const char *c_type_to_string()
     {
-        auto t = to_s7_type<T>();
-        return (t == Type::CObject) ? detail::get_type_name<T>(sc)
-                                    : type_to_string(t);
+        return detail::c_type_to_string<T>(sc);
     }
 };
 
