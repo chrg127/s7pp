@@ -142,7 +142,8 @@ bool operator==(const Set &a, const Set &b)
 void test_set()
 {
     s7::Scheme scheme;
-    scheme.make_c_type<Set>("set",
+    scheme.make_usertype<Set>("set",
+        s7::Constructors([&]() { return scheme.make_c_object(new Set(scheme)); }),
         s7::Op::GcMark,   [&](Set &s) { return s.gc_mark(scheme); },
         s7::Op::ToString, [&](Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
@@ -155,23 +156,18 @@ struct v2 {
     double x, y;
 
     double &operator[](s7_int i) { return i == 0 ? x : y; }
-
-    std::string to_string()
-    {
-        return std::format("v2({}, {})", x, y);
-    }
 };
 
 void test_v2()
 {
     s7::Scheme scheme;
-    auto ctor1 = []() -> v2 { return v2 { .x = 0, .y = 0 }; };
-    auto ctor2 = [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; };
-    auto ctor = scheme.make_constructor(ctor1, ctor2);
-    scheme.define_function("v2", "doc", ctor);
-
-    scheme.make_c_type<v2>("v2",
-        s7::Op::ToString, &v2::to_string
+    scheme.make_usertype<v2>("v2",
+        s7::Constructors("v2",
+            []() -> v2 { return v2 { .x = 0, .y = 0 }; },
+            [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }
+        ),
+        s7::Op::ToString,
+        [](v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); }
     );
     scheme.repl();
 }
@@ -199,8 +195,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    // test_set();
-    test_v2();
+    test_set();
+    // test_v2();
     // test_star_fns();
 }
 

@@ -414,6 +414,15 @@ Type to_s7_output_type()
         else                                                                                                { return Type::CObject; }
 }
 
+template <typename... Fns>
+struct Constructors {
+    std::string_view name = "";
+    std::tuple<Fns...> fns;
+
+    explicit Constructors(Fns&&... fns) : fns(fns...) {}
+    explicit Constructors(std::string_view name, Fns&&... fns) : name(name), fns(fns...) {}
+};
+
 struct Scheme {
     s7_scheme *sc;
 
@@ -805,15 +814,31 @@ public:
     //     auto f = make_s7_function(
     // }
 
-    /* usertypes */
     template <typename T>
-    s7_int make_c_type(std::string_view name)
+    s7_pointer make_c_object(T *p)
+    {
+        return s7_make_c_object(this->sc, detail::get_type_tag<T>(sc), reinterpret_cast<void *>(p));
+    }
+
+    /* usertypes */
+
+    template <typename T, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors)
     {
         auto tag = s7_make_c_type(sc, name.data());
         detail::TypeTag<T>::tags
             .insert_or_assign(reinterpret_cast<uintptr_t>(sc), tag);
 
-        if constexpr(requires { T(); }) {
+        if constexpr(sizeof...(Fns) != 0) {
+            auto ctor = std::apply([&]<typename... F>(F &&...fns) { return make_constructor(fns...); }, constructors.fns);
+            auto doc = std::format("(make-{}) creates a new {}", name, name);
+            if (constructors.name.empty()) {
+                auto ctor_name = std::format("make-{}", name);
+                define_function(s7_string(save_string(ctor_name)), doc.c_str(), ctor);
+            } else {
+                define_function(s7_string(save_string(constructors.name)), doc.c_str(), ctor);
+            }
+        } else if constexpr(requires { T(); }) {
             auto ctor_name = std::format("make-{}", name);
             auto doc = std::format("(make-{}) creates a new {}", name, name);
             define_function(s7_string(save_string(ctor_name)), doc.c_str(), [this, tag]() -> s7_pointer {
@@ -901,10 +926,10 @@ public:
         return tag;
     }
 
-    template <typename T, typename F>
-    s7_int make_c_type(std::string_view name, Op op, F &&fn, auto&&... args)
+    template <typename T, typename F, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, Op op, F &&fn, auto&&... args)
     {
-        auto tag = make_c_type<T>(name, args...);
+        auto tag = make_usertype<T>(name, constructors, args...);
         auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
                       : op == Op::Copy     ? s7_c_type_set_copy
                       : op == Op::Fill     ? s7_c_type_set_fill
