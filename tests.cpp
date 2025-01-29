@@ -20,7 +20,7 @@ void test_scheme_defined_function()
     auto fn = [](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
         auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
         auto args = s7::List(_args);
-        auto sym = s7_symbol_table_find_name(scheme.sc, scheme.to<const char *>(args[0]));
+        auto sym = s7_symbol_table_find_name(scheme.ptr(), scheme.to<const char *>(args[0]));
         printf("%p\n", static_cast<void *>(sym));
         printf("%s\n", scheme.to_string(sym).data());
         return scheme.undefined();
@@ -98,7 +98,7 @@ struct Set {
     std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
 
     explicit Set(s7::Scheme &scheme)
-        : set(512, s7::Hash(scheme.sc), s7::Equal(scheme.sc))
+        : set(512, s7::Hash(scheme.ptr()), s7::Equal(scheme.ptr()))
     {}
 
     Set(const Set &) = delete;
