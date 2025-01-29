@@ -212,39 +212,39 @@ Type type_of(s7_pointer p)
 
 Type type_of(s7_scheme *sc, s7_pointer p)
 {
-         if (s7_is_nil(sc, p)         { return Type::Nil;           }
-    else if (s7_is_unspecified(sc, p) { return Type::Undefined;     }
-    else if (s7_is_let(p))            { return Type::Let;           }
-    else if (s7_is_openlet(p))        { return Type::OpenLet;       }
-    else if (s7_is_boolean(p))        { return Type::Boolean;       }
-    else if (s7_is_integer(p))        { return Type::Integer;       }
-    else if (s7_is_real(p))           { return Type::Real;          }
-    else if (s7_is_string(p))         { return Type::String;        }
-    else if (s7_is_character(p))      { return Type::Character;     }
-    else if (s7_is_ratio(p))          { return Type::Ratio;         }
-    else if (s7_is_complex(p))        { return Type::Complex;       }
-    else if (s7_is_vector(p))         { return Type::Vector;        }
-    else if (s7_is_int_vector(p))     { return Type::IntVector;     }
-    else if (s7_is_float_vector(p))   { return Type::FloatVector;   }
-    else if (s7_is_byte_vector(p))    { return Type::ByteVector;    }
-    else if (s7_is_complex_vector(p)) { return Type::ComplexVector; }
-    else if (s7_is_pair(p))           { return Type::List;          }
-    else if (s7_is_c_pointer(p))      { return Type::CPointer;      }
-    else if (s7_is_c_object(p))       { return Type::CObject;       }
-    else if (s7_is_random_state(p))   { return Type::RandomState;   }
-    else if (s7_is_hash_table(p))     { return Type::HashTable;     }
-    else if (s7_is_input_port(sc, p)) { return Type::InputPort;     }
-    else if (s7_is_output_port(sc, p)){ return Type::OutputPort;    }
-    else if (s7_is_syntax(p))         { return Type::Syntax;        }
-    else if (s7_is_symbol(p))         { return Type::Symbol;        }
-    else if (s7_is_keyword(p))        { return Type::Keyword;       }
-    else if (s7_is_procedure(p))      { return Type::Procedure;     }
-    else if (s7_is_macro(sc, p))      { return Type::Macro;         }
-    else if (s7_is_dilambda(p))       { return Type::Dilambda;      }
-    else if (s7_is_multiple_value(p)) { return Type::Values;        }
-    else if (s7_is_iterator(p))       { return Type::Iterator;      }
-    else if (s7_is_bignum(p))         { return Type::BigNum;        }
-    else                              { return Type::Unknown;       }
+         if (s7_is_null(sc, p))        { return Type::Nil;           }
+    else if (s7_is_unspecified(sc, p)) { return Type::Unspecified;   }
+    else if (s7_is_let(p))             { return Type::Let;           }
+    else if (s7_is_openlet(p))         { return Type::OpenLet;       }
+    else if (s7_is_boolean(p))         { return Type::Boolean;       }
+    else if (s7_is_integer(p))         { return Type::Integer;       }
+    else if (s7_is_real(p))            { return Type::Real;          }
+    else if (s7_is_string(p))          { return Type::String;        }
+    else if (s7_is_character(p))       { return Type::Character;     }
+    else if (s7_is_ratio(p))           { return Type::Ratio;         }
+    else if (s7_is_complex(p))         { return Type::Complex;       }
+    else if (s7_is_vector(p))          { return Type::Vector;        }
+    else if (s7_is_int_vector(p))      { return Type::IntVector;     }
+    else if (s7_is_float_vector(p))    { return Type::FloatVector;   }
+    else if (s7_is_byte_vector(p))     { return Type::ByteVector;    }
+    else if (s7_is_complex_vector(p))  { return Type::ComplexVector; }
+    else if (s7_is_pair(p))            { return Type::List;          }
+    else if (s7_is_c_pointer(p))       { return Type::CPointer;      }
+    else if (s7_is_c_object(p))        { return Type::CObject;       }
+    else if (s7_is_random_state(p))    { return Type::RandomState;   }
+    else if (s7_is_hash_table(p))      { return Type::HashTable;     }
+    else if (s7_is_input_port(sc, p))  { return Type::InputPort;     }
+    else if (s7_is_output_port(sc, p)) { return Type::OutputPort;    }
+    else if (s7_is_syntax(p))          { return Type::Syntax;        }
+    else if (s7_is_symbol(p))          { return Type::Symbol;        }
+    else if (s7_is_keyword(p))         { return Type::Keyword;       }
+    else if (s7_is_procedure(p))       { return Type::Procedure;     }
+    else if (s7_is_macro(sc, p))       { return Type::Macro;         }
+    else if (s7_is_dilambda(p))        { return Type::Dilambda;      }
+    else if (s7_is_multiple_value(p))  { return Type::Values;        }
+    else if (s7_is_iterator(p))        { return Type::Iterator;      }
+    else if (s7_is_bignum(p))          { return Type::BigNum;        }
+    else                               { return Type::Unknown;       }
 }
 
 template <typename T>
@@ -981,7 +981,7 @@ public:
     void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
     {
         auto _name = s7_string(save_string(name));
-        s7_define_typed_function_star(sc, _name, f, arglist_desc.data(), doc.data(), sig);
+        s7_define_function_star(sc, _name, f, arglist_desc.data(), doc.data());
     }
 
     template <typename F>
