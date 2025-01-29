@@ -899,6 +899,8 @@ public:
 
     Variable operator[](std::string_view name);
 
+    s7_pointer sym(std::string_view name) { return s7_make_symbol(sc, name.data()); }
+
     /* signatures */
     template <typename R, typename... Args>
     s7_pointer make_signature(R (*)(Args...))
@@ -976,6 +978,12 @@ public:
         return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
     }
 
+    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
+    {
+        auto _name = s7_string(save_string(name));
+        s7_define_typed_function_star(sc, _name, f, arglist_desc.data(), doc.data(), sig);
+    }
+
     template <typename F>
     void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
     {
@@ -996,6 +1004,21 @@ public:
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
         define(sc, _name, f, 0, 0, true, doc.data(), sig);
+    }
+
+    void define_macro(std::string_view name, std::string_view doc, s7_function f)
+    {
+        auto _name = s7_string(save_string(name));
+        s7_define_macro(sc, _name, f, 0, 0, true, doc.data());
+    }
+
+    template <typename F>
+    void define_macro(std::string_view name, std::string_view doc, F &&func)
+    {
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        auto _name = s7_string(save_string(name));
+        auto f = detail::make_s7_function(sc, _name, func);
+        s7_define_macro(sc, _name, f, NumArgs, 0, false, doc.data());
     }
 
     /* usertypes */
