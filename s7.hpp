@@ -390,6 +390,56 @@ s7_pointer from(s7_scheme *sc, const T &x)
 }
 
 template <typename T>
+s7_pointer from(s7_scheme *sc, T &&x)
+{
+         if constexpr(std::is_same_v<T, s7_pointer>)                                      { return x;                                                   }
+    else if constexpr(std::is_same_v<T, bool>)                                            { return s7_make_boolean(sc, x);                              }
+    else if constexpr(std::is_same_v<T, s7_int> || std::is_same_v<T, int>
+                   || std::is_same_v<T, short> || std::is_same_v<T, long>)                { return s7_make_integer(sc, x);                              }
+    else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>)              { return s7_make_real(sc, x);                                 }
+    else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<T>>, char *>)       { return s7_make_string(sc, x);                               }
+    else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<T>>, const char *>) { return s7_make_string(sc, x);                               }
+    else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>)                { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
+    else if constexpr(std::is_same_v<T, std::string_view>)                                { return s7_make_string_with_length(sc, x.data(), x.size());  }
+    else if constexpr(std::is_same_v<T, unsigned char>)                                   { return s7_make_character(sc, x);                            }
+    else if constexpr(std::is_pointer_v<T>)                                               { return s7_make_c_pointer(sc, x);                            }
+    else if constexpr(std::is_same_v<T, List>)                                            { return x.ptr();                                             }
+    else if constexpr(std::is_same_v<T, Values>)                                          { return x.p;                                                 }
+    else if constexpr(std::is_same_v<T, std::span<s7_pointer>> || std::is_same_v<T, std::vector<s7_pointer>>) {
+        auto vec = s7_make_vector(sc, x.size());
+        for (size_t i = 0; i < x.size(); i++) {
+            s7_vector_set(sc, vec, i, x[i]);
+        }
+        return vec;
+    } else if constexpr(std::is_same_v<T, std::span<s7_int>> || std::is_same_v<T, std::vector<s7_int>>
+                     || std::is_same_v<T, std::span<int>>    || std::is_same_v<T, std::vector<int>>
+                     || std::is_same_v<T, std::span<short>>  || std::is_same_v<T, std::vector<short>>
+                     || std::is_same_v<T, std::span<long>>   || std::is_same_v<T, std::vector<long>>) {
+        auto vec = s7_make_int_vector(sc, x.size(), 1, nullptr);
+        for (size_t i = 0; i < x.size(); i++) {
+            s7_int_vector_set(vec, i, x[i]);
+        }
+        return vec;
+    } else if constexpr(std::is_same_v<T, std::span<double>> || std::is_same_v<T, std::vector<double>>
+                     || std::is_same_v<T, std::span<float>>  || std::is_same_v<T, std::vector<float>>) {
+        auto vec = s7_make_float_vector(sc, x.size(), 1, nullptr);
+        for (size_t i = 0; i < x.size(); i++) {
+            s7_float_vector_set(vec, i, x[i]);
+        }
+        return vec;
+    } else if constexpr(std::is_same_v<T, std::span<uint8_t>> || std::is_same_v<T, std::vector<uint8_t>>) {
+        auto vec = s7_make_byte_vector(sc, x.size(), 1, nullptr);
+        for (size_t i = 0; i < x.size(); i++) {
+            s7_byte_vector_set(vec, i, x[i]);
+        }
+        return vec;
+    } else {
+        auto tag = detail::get_type_tag<T>(sc);
+        return s7_make_c_object(sc, tag, reinterpret_cast<void *>(new T(std::move(x))));
+    }
+}
+
+template <typename T>
 const char *c_type_to_string(s7_scheme *sc)
 {
     auto t = to_s7_type<T>();
@@ -502,10 +552,9 @@ namespace detail {
                 }(std::make_index_sequence<NumArgs>());
                 return s7_undefined(sc);
             } else {
-                auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                     return fn(to<Args>(sc, arr[Is])...);
-                }(std::make_index_sequence<NumArgs>());
-                return from<R>(sc, res);
+                }(std::make_index_sequence<NumArgs>()));
             }
         };
     }
@@ -521,8 +570,7 @@ namespace detail {
                 fn(VarArgs(sc, args, name));
                 return s7_undefined(sc);
             } else {
-                auto res = fn(VarArgs<T>(sc, args, name));
-                return s7::from<R>(sc, res);
+                return from<R>(sc, fn(VarArgs<T>(sc, args, name)));
             }
         };
     }
@@ -591,10 +639,9 @@ namespace detail {
             }(std::make_index_sequence<NumArgs>());
             return s7_undefined(sc);
         } else {
-            auto res = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            return from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                 return fn(to<Args>(sc, arr[Is])...);
-            }(std::make_index_sequence<NumArgs>());
-            return from<R>(sc, res);
+            }(std::make_index_sequence<NumArgs>()));
         }
     }
 
@@ -609,8 +656,7 @@ namespace detail {
             fn(VarArgs(sc, args, name));
             return s7_undefined(sc);
         } else {
-            auto res = fn(VarArgs<T>(sc, args, name));
-            return from<R>(sc, res);
+            return from<R>(sc, fn(VarArgs<T>(sc, args, name)));
         }
     }
 
@@ -847,13 +893,13 @@ public:
     template <typename T>
     List list(const T &arg)
     {
-        return List(s7_cons(sc, this->from<T>(arg), s7_nil(sc)));
+        return List(s7_cons(sc, from<T>(arg), s7_nil(sc)));
     }
 
     template <typename T, typename... Args>
     List list(const T &arg, Args&&... args)
     {
-        return List(s7_cons(sc, this->from<T>(arg), list(args...).ptr()));
+        return List(s7_cons(sc, from<T>(arg), list(args...).ptr()));
     }
 
     List list() { return s7::List(s7_nil(sc)); }
@@ -886,14 +932,14 @@ public:
     template <typename T>
     s7_pointer define(std::string_view name, const T &value, std::string_view doc = "")
     {
-        auto object = this->from<T>(value);
+        auto object = from<T>(value);
         return s7_define_variable_with_documentation(sc, name.data(), object, doc.data());
     }
 
     template <typename T>
     s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
     {
-        auto object = this->from<T>(value);
+        auto object = from<T>(value);
         return s7_define_constant_with_documentation(sc, name.data(), object, doc.data());
     }
 

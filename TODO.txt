@@ -1,6 +1,5 @@
 - math ops
 - more checks when defining ops on usertypes
-- a from() that takes rvalues
 - function setters
 - on the same vein, using dilambda for usertype properties: these can be split from the
   make_usertype() stuff
@@ -8,3 +7,4 @@
 - (possibly) let handling
 - (possibly) errors
 - hook stuff seems cool but is a feature not attached to anything else?
+- add function support inside Variable

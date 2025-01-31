@@ -103,6 +103,8 @@ struct Set {
 
     Set(const Set &) = delete;
     Set & operator=(const Set &) = delete;
+    Set(Set &&) = default;
+    Set & operator=(Set &&) = default;
 
     void gc_mark(s7::Scheme &scheme)
     {
@@ -143,7 +145,7 @@ void test_set()
 {
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
-        s7::Constructors([&]() { return scheme.make_c_object(new Set(scheme)); }),
+        s7::Constructors([&]() { return Set(scheme); }),
         s7::Op::GcMark,   [&](Set &s) { return s.gc_mark(scheme); },
         s7::Op::ToString, [&](Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
@@ -209,9 +211,9 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    // test_set();
+    test_set();
     // test_v2();
     // test_star_fns();
-    test_varargs();
+    // test_varargs();
 }
 
