@@ -951,6 +951,12 @@ public:
         return s7_call(sc, s7_name_to_value(sc, name.data()), list(args...).ptr());
     }
 
+    s7_pointer apply(s7_pointer fn, s7_pointer list) { return s7_apply_function(sc, fn, list); }
+    s7_pointer apply(s7_pointer fn, List list) { return s7_apply_function(sc, fn, list.ptr()); }
+
+    template <typename T>
+    s7_pointer apply(s7_pointer fn, VarArgs<T> list) { return s7_apply_function(sc, fn, list.ptr()); }
+
     /* function creation */
 
     // special case for functions that follow s7's standard signature
@@ -1019,6 +1025,51 @@ public:
         auto _name = s7_string(save_string(name));
         auto f = detail::make_s7_function(sc, _name, func);
         s7_define_macro(sc, _name, f, NumArgs, 0, false, doc.data());
+    }
+
+    s7_pointer make_function(std::string_view name, std::string_view doc, s7_function fn,
+        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    {
+        auto _name = s7_string(save_string(name));
+        auto make = opts.unsafe_arglist || opts.unsafe_body
+            ? s7_make_function
+            : s7_make_safe_function;
+        return make(sc, _name, fn, 0, 0, true, doc.data());
+    }
+
+    template <typename F>
+    s7_pointer make_function(std::string_view name, std::string_view doc, F &&func,
+        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    {
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        auto _name = s7_string(save_string(name));
+        auto f = detail::make_s7_function(sc, _name, func);
+        auto sig = make_signature(func);
+        return s7_make_typed_function(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
+    }
+
+    s7_pointer make_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
+    {
+        auto _name = s7_string(save_string(name));
+        return s7_make_function_star(sc, _name, f, arglist_desc.data(), doc.data());
+    }
+
+    template <typename F>
+    s7_pointer make_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
+    {
+        auto _name = s7_string(save_string(name));
+        auto f = detail::make_s7_function(sc, _name, func);
+        return s7_make_function_star(sc, _name, f, arglist_desc.data(), doc.data());
+    }
+
+    template <typename F>
+    s7_pointer make_varargs_function(std::string_view name, std::string_view doc, F &&func,
+            FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    {
+        auto _name = s7_string(save_string(name));
+        auto f = detail::make_s7_function(sc, _name, func);
+        auto sig = make_signature(func);
+        return s7_make_typed_function(sc, _name, f, 0, 0, true, doc.data(), sig);
     }
 
     /* usertypes */
