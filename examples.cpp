@@ -35,10 +35,10 @@ void example_call_get_set_vars()
     s7::Scheme scheme;
     scheme["an-integer"] = 1;
     scheme.eval("(define (add1 a) (+ a 1))");
-    printf("an-integer: %lld\n", scheme["an-integer"].as<s7_int>());
+    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as<s7_int>()).c_str());
     scheme["an-integer"] = 32;
-    printf("now an-integer: %lld\n", scheme["an-integer"].as<s7_int>());
-    printf("(add1 2): %lld\n", scheme.to<s7_int>(scheme.call("add1", 2)));
+    printf("%s\n", std::format("now an-integer: {}", scheme["an-integer"].as<s7_int>()).c_str());
+    printf("%s\n", std::format("(add1 2): {}", scheme.to<s7_int>(scheme.call("add1", 2))).c_str());
 }
 
 // C++ version of the repl
@@ -89,6 +89,12 @@ void example_listener_dax()
             return std::format("<dax {} {}>", dax.x, scheme.to_string(dax.data));
         }
     );
+    scheme.define_property("dax-x", "dax x field",
+        [](dax &d) -> double { return d.x; },
+        [](dax &d, double x) -> void { d.x = x; });
+    scheme.define_property("dax-data", "dax data field",
+        [](dax &d) -> s7_pointer { return d.data; },
+        [](dax &d, s7_pointer data) -> void { d.data = data; });
 
     // i can't use scheme.repl() here
     for (;;) {
@@ -109,7 +115,7 @@ void example_listener_dax()
 s7_pointer my_read(s7_scheme *sc, s7_read_t /*peek*/, s7_pointer /*port*/)
 {
     auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
-    return scheme.from<char>(fgetc(stdin));
+    return scheme.from<char>((char) fgetc(stdin));
 }
 
 void my_print(s7_scheme *, uint8_t c, s7_pointer /*port*/)
@@ -242,7 +248,7 @@ int main()
     // example_c_function_variable();
     // example_call_get_set_vars();
     // example_cpp_repl();
-    // example_listener_dax();
+    example_listener_dax();
     // example_ports_redirect();
     // example_star_function();
     // example_macro();

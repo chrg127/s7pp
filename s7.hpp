@@ -251,6 +251,7 @@ template <typename T>
 Type to_s7_type()
 {
          if constexpr(std::is_same_v<T, s7_pointer>)            { return Type::Any;         }
+    else if constexpr(std::is_same_v<T, void>)                  { return Type::Unspecified; }
     else if constexpr(std::is_same_v<T, bool>)                  { return Type::Boolean;     }
     else if constexpr(std::is_same_v<T, s7_int>)                { return Type::Integer;     }
     else if constexpr(std::is_same_v<T, double>)                { return Type::Real;        }
@@ -550,7 +551,7 @@ namespace detail {
                 [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                     fn(to<Args>(sc, arr[Is])...);
                 }(std::make_index_sequence<NumArgs>());
-                return s7_undefined(sc);
+                return s7_unspecified(sc);
             } else {
                 return from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                     return fn(to<Args>(sc, arr[Is])...);
@@ -568,7 +569,7 @@ namespace detail {
                 .find(reinterpret_cast<uintptr_t>(sc))->second;
             if constexpr(std::is_same_v<R, void>) {
                 fn(VarArgs(sc, args, name));
-                return s7_undefined(sc);
+                return s7_unspecified(sc);
             } else {
                 return from<R>(sc, fn(VarArgs<T>(sc, args, name)));
             }
@@ -637,7 +638,7 @@ namespace detail {
             [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                 fn(to<Args>(arr[Is])...);
             }(std::make_index_sequence<NumArgs>());
-            return s7_undefined(sc);
+            return s7_unspecified(sc);
         } else {
             return from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                 return fn(to<Args>(sc, arr[Is])...);
@@ -654,7 +655,7 @@ namespace detail {
             .find(reinterpret_cast<uintptr_t>(sc))->second;
         if constexpr(std::is_same_v<R, void>) {
             fn(VarArgs(sc, args, name));
-            return s7_undefined(sc);
+            return s7_unspecified(sc);
         } else {
             return from<R>(sc, fn(VarArgs<T>(sc, args, name)));
         }
@@ -692,18 +693,19 @@ namespace detail {
         else                 { t = to_s7_output_type<T>(); }
         auto f = [&](auto s) { return s7_make_symbol(sc, s); };
         switch (t) {
-        case Type::Any:        { return s7_t(sc);   }
-        case Type::Boolean:    { return f("boolean?");      }
-        case Type::Integer:    { return f("integer?");      }
-        case Type::Real:       { return f("real?");         }
-        case Type::String:     { return f("string?");       }
-        case Type::Character:  { return f("character?");    }
-        case Type::Vector:     { return f("vector?");       }
-        case Type::IntVector:  { return f("int-vector?");   }
-        case Type::FloatVector:{ return f("float-vector?"); }
-        case Type::ByteVector: { return f("byte-vector?");  }
-        case Type::CPointer:   { return f("c-pointer?");    }
-        case Type::List:       { return f("list?");         }
+        case Type::Any:         { return s7_t(sc);   }
+        case Type::Unspecified: { return f("unspecified?"); }
+        case Type::Boolean:     { return f("boolean?");      }
+        case Type::Integer:     { return f("integer?");      }
+        case Type::Real:        { return f("real?");         }
+        case Type::String:      { return f("string?");       }
+        case Type::Character:   { return f("character?");    }
+        case Type::Vector:      { return f("vector?");       }
+        case Type::IntVector:   { return f("int-vector?");   }
+        case Type::FloatVector: { return f("float-vector?"); }
+        case Type::ByteVector:  { return f("byte-vector?");  }
+        case Type::CPointer:    { return f("c-pointer?");    }
+        case Type::List:        { return f("list?");         }
         default: {
             auto s = std::string(get_type_name<T>(sc)) + "?";
             return f(s.c_str());
@@ -875,8 +877,10 @@ public:
     void mark(s7_pointer p)    { s7_mark(p); }
 
     /* constants */
-    s7_pointer undefined() { return s7_undefined(sc); }
-    s7_pointer nil()       { return s7_nil(sc); }
+    s7_pointer nil()         { return s7_nil(sc); }
+    s7_pointer undefined()   { return s7_undefined(sc); }
+    s7_pointer unspecified() { return s7_unspecified(sc); }
+    s7_pointer eof()          { return s7_eof_object(sc); }
 
     /* functions for inspecting and converting from/to scheme objects */
     template <typename T> bool is(s7_pointer p)                 { return s7::is<T>(sc, p); }
@@ -1084,8 +1088,8 @@ public:
     }
 
     template <typename F>
-    s7_pointer make_function(std::string_view name, std::string_view doc, F &&func,
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    s7_pointer make_function(std::string_view name, std::string_view doc, F &&func)
+        // FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
     {
         constexpr auto NumArgs = FunctionTraits<F>::arity;
         auto _name = s7_string(save_string(name));
@@ -1109,8 +1113,8 @@ public:
     }
 
     template <typename F>
-    s7_pointer make_varargs_function(std::string_view name, std::string_view doc, F &&func,
-            FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    s7_pointer make_varargs_function(std::string_view name, std::string_view doc, F &&func)
+        // FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
     {
         auto _name = s7_string(save_string(name));
         auto f = detail::make_s7_function(sc, _name, func);
@@ -1251,6 +1255,22 @@ public:
         return tag;
     }
 
+    // also known as dilambda, but that is such a bad name (although technically right)
+    template <typename F, typename G>
+    void define_property(std::string_view name, std::string_view doc, F &&getter, G &&setter)
+    {
+        constexpr auto NumArgsF = FunctionTraits<F>::arity;
+        constexpr auto NumArgsG = FunctionTraits<G>::arity;
+        auto g = detail::make_s7_function(sc, name.data(), getter);
+        auto s = detail::make_s7_function(sc, name.data(), setter);
+        auto gsig = make_signature(getter);
+        auto ssig = make_signature(setter);
+        s7_define_variable(sc, name.data(),
+            s7_typed_dilambda(sc, name.data(), g, NumArgsF, 0,
+                s, NumArgsG, 0, doc.data(), gsig, ssig)
+        );
+    }
+
     /* utilities */
     s7_pointer save_string(std::string_view s)
     {
@@ -1267,6 +1287,16 @@ public:
     const char *c_type_to_string()
     {
         return s7::c_type_to_string<T>(sc);
+    }
+
+    s7_pointer make_continuation()
+    {
+        return s7_make_continuation(sc);
+    }
+
+    s7_pointer set_setter(s7_pointer p, s7_pointer setter)
+    {
+        return s7_set_setter(sc, p, setter);
     }
 };
 
