@@ -1,10 +1,13 @@
+have to do:
 - math ops
 - more checks when defining ops on usertypes
 - function setters
 - on the same vein, using dilambda for usertype properties: these can be split from the
   make_usertype() stuff
+- add function support inside Variable
+
+probably won't do soon:
 - (possibly) ports
 - (possibly) let handling
 - (possibly) errors
 - hook stuff seems cool but is a feature not attached to anything else?
-- add function support inside Variable
