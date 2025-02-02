@@ -25,13 +25,14 @@ namespace detail {
 
     template <typename T>
     struct TypeTag {
-        static inline std::unordered_map<uintptr_t, s7_int> tags;
+        static inline std::unordered_map<uintptr_t, s7_int> tag;
+        static inline std::unordered_map<uintptr_t, s7_pointer> let;
     };
 
     template <typename T>
     s7_int get_type_tag(s7_scheme *sc)
     {
-        auto &m = TypeTag<std::remove_cvref_t<T>>::tags;
+        auto &m = TypeTag<std::remove_cvref_t<T>>::tag;
         auto it = m.find(reinterpret_cast<uintptr_t>(sc));
         assert(it != m.end() && "missing tag for T");
         return it->second;
@@ -43,6 +44,15 @@ namespace detail {
         auto tag = get_type_tag<T>(sc);
         auto ctypes = s7_let_field_ref(sc, s7_make_symbol(sc, "c-types"));
         return s7_string(s7_list_ref(sc, ctypes, tag));
+    }
+
+    template <typename T>
+    s7_pointer get_type_let(s7_scheme *sc)
+    {
+        auto &m = TypeTag<std::remove_cvref_t<T>>::let;
+        auto it = m.find(reinterpret_cast<uintptr_t>(sc));
+        assert(it != m.end() && "missing tag for T");
+        return it->second;
     }
 
     template <typename R, typename... Args>
@@ -769,6 +779,10 @@ enum class Op {
     Length, ToString, ToList, Ref, Set,
 };
 
+enum class MathOp {
+    Add, Sub, Mul, Div
+};
+
 template <typename... Fns>
 struct Constructors {
     std::string_view name = "";
@@ -783,7 +797,7 @@ struct Variable;
 class Scheme {
     s7_scheme *sc;
 
-    template <typename... Fns>
+    template <typename T, typename... Fns>
     s7_function _make_constructor(Fns&&... fns)
     {
         constexpr auto NumFns = sizeof...(Fns);
@@ -810,18 +824,21 @@ class Scheme {
 
             auto it = std::find_if(results.begin(), results.end(),
                 [](s7_pointer p) { return p != nullptr; });
-            if (it == results.end()) {
-                std::vector<s7_pointer> types;
-                for (auto arg : s7::List(args)) {
-                    types.push_back(s7_make_symbol(sc, type_to_string(type_of(arg))));
-                }
-                return s7_error(sc, s7_make_symbol(sc, "ctor-mismatch"), scheme.list(
-                    make_message(NumFns),
-                    s7_array_to_list(sc, types.size(), types.data()),
-                    scheme.make_signature(&std::remove_cvref_t<Fns>::operator())...
-                ).ptr());
+            if (it != results.end()) {
+                auto obj = *it;
+                s7_c_object_set_let(sc, obj, detail::get_type_let<T>(sc));
+                return obj;
             }
-            return *it;
+
+            std::vector<s7_pointer> types;
+            for (auto arg : s7::List(args)) {
+                types.push_back(s7_make_symbol(sc, type_to_string(type_of(arg))));
+            }
+            return s7_error(sc, s7_make_symbol(sc, "ctor-mismatch"), scheme.list(
+                make_message(NumFns),
+                s7_array_to_list(sc, types.size(), types.data()),
+                scheme.make_signature(&std::remove_cvref_t<Fns>::operator())...
+            ).ptr());
         };
     }
 
@@ -1123,21 +1140,21 @@ public:
     }
 
     /* usertypes */
-    template <typename... Fns>
+    template <typename T, typename... Fns>
     s7_function make_constructor(Fns&&... fns)
     {
-        return _make_constructor(detail::as_lambda(fns)...);
+        return _make_constructor<T>(detail::as_lambda(fns)...);
     }
 
     template <typename T, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let)
     {
         auto tag = s7_make_c_type(sc, name.data());
-        detail::TypeTag<T>::tags
-            .insert_or_assign(reinterpret_cast<uintptr_t>(sc), tag);
+        detail::TypeTag<T>::tag.insert_or_assign(reinterpret_cast<uintptr_t>(sc), tag);
+        detail::TypeTag<T>::let.insert_or_assign(reinterpret_cast<uintptr_t>(sc), let);
 
         if constexpr(sizeof...(Fns) != 0) {
-            auto ctor = std::apply([&]<typename... F>(F &&...fns) { return make_constructor(fns...); }, constructors.fns);
+            auto ctor = std::apply([&]<typename... F>(F &&...fns) { return make_constructor<T>(fns...); }, constructors.fns);
             auto doc = std::format("(make-{}) creates a new {}", name, name);
             if (constructors.name.empty()) {
                 auto ctor_name = std::format("make-{}", name);
@@ -1222,6 +1239,12 @@ public:
             });
         }
 
+        s7_c_type_set_gc_mark(sc, tag, [](s7_scheme *, s7_pointer arg) -> s7_pointer {
+            auto obj_let = s7_c_object_let(arg);
+            s7_mark(obj_let);
+            return nullptr;
+        });
+
         auto is_name = std::format("{}?", name);
         auto is_doc  = std::format("({}? value) checks if value is a {}", name, name);
         auto is = [](s7_scheme *sc, s7_pointer args) {
@@ -1234,9 +1257,44 @@ public:
     }
 
     template <typename T, typename F, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, Op op, F &&fn, auto&&... args)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors,
+        s7_pointer let, Op op, F &&fn, auto&&... args)
+        requires (FunctionTraits<F>::arity == 1)
     {
-        auto tag = make_usertype<T>(name, constructors, args...);
+        auto tag = make_usertype<T>(name, constructors, let, args...);
+        auto set_func = op == Op::Copy     ? s7_c_type_set_copy
+                      : op == Op::Reverse  ? s7_c_type_set_reverse
+                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
+                      : op == Op::GcFree   ? s7_c_type_set_gc_free
+                      : op == Op::Length   ? s7_c_type_set_length
+                      : op == Op::ToString ? s7_c_type_set_to_string
+                      : op == Op::ToList   ? s7_c_type_set_to_list
+                      :                      s7_c_type_set_ref;
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        if (op == Op::GcMark) {
+            auto fn2 = detail::as_lambda(fn);
+            auto f = detail::make_s7_function(sc, _name, [fn2](s7_pointer obj) -> s7_pointer {
+                auto obj_let = s7_c_object_let(obj);
+                s7_mark(obj_let);
+                fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
+                return nullptr;
+            });
+            set_func(sc, tag, f);
+        } else {
+            auto f = detail::make_s7_function(sc, _name, fn);
+            set_func(sc, tag, f);
+        }
+        return tag;
+    }
+
+    template <typename T, typename F, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, Op op, F &&fn, auto&&... args)
+    {
+        auto tag = make_usertype<T>(name, constructors, let, args...);
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        auto f = detail::make_s7_function(sc, _name, fn);
         auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
                       : op == Op::Copy     ? s7_c_type_set_copy
                       : op == Op::Fill     ? s7_c_type_set_fill
@@ -1248,12 +1306,47 @@ public:
                       : op == Op::ToList   ? s7_c_type_set_to_list
                       : op == Op::Ref      ? s7_c_type_set_ref
                       :                      s7_c_type_set_set;
-        auto func_name = std::format("{}-op", name);
-        auto _name = s7_string(save_string(func_name));
-        auto f = detail::make_s7_function(sc, _name, fn);
         set_func(sc, tag, f);
         return tag;
     }
+
+    // template <typename T, typename F, typename... Fns>
+    // s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MathOp op, F &&fn, auto&&... args)
+    // {
+        // signal that the object has an openlet
+        // add functions to object's let in ctor
+        // install a new definition of the math op that will check any c-object's let
+
+//         auto old_add = (*this)["+"];
+//         auto new_add = [old_add](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
+//             auto args = List(_args);
+//             if (args.size() == 0) {
+//                 return s7_make_integer(sc, 0);
+//             }
+//             if (args.size() == 1) {
+//                 return args.car();
+//             }
+//             auto res = l.advance();
+//             for (auto arg = l.advance(); !l.at_end(); arg = l.advance()) {
+//                 if (s7_is_c_object(res)) {
+//                     auto method = s7_method(sc, res, s7_make_symbol("+"));
+//                     if (method == s7_undefined(sc)) {
+//                         s7_wrong_type_arg_error(sc, "+", 0, res, "a real");
+//                     }
+//                     res = s7_call(sc, method, s7_list(sc, 2, res, arg));
+//                 } else if (s7_is_c_object(arg)) {
+//                     auto method = s7_method(sc, arg, s7_make_symbol("+"));
+//                     if (method == s7_undefined(sc)) {
+//                         s7_wrong_type_arg_error(sc, "+", 0, arg, "a real");
+//                     }
+//                     res = s7_call(sc, method, s7_list(sc, 2, res, arg));
+//                 } else {
+//                     res = s7_call(sc, old_add, s7_list(sc, 2, res, arg));
+//                 }
+//             }
+//         }
+//         s7_define_function(sc, "+", new_add, 0, 0, true, "(+ ...) adds its arguments");
+    // }
 
     // also known as dilambda, but that is such a bad name (although technically right)
     template <typename F, typename G>

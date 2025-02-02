@@ -146,6 +146,7 @@ void test_set()
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
         s7::Constructors([&]() { return Set(scheme); }),
+        s7_inlet(scheme.ptr(), scheme.nil()),
         s7::Op::GcMark,   [&](Set &s) { return s.gc_mark(scheme); },
         s7::Op::ToString, [&](Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
@@ -160,17 +161,24 @@ struct v2 {
     double &operator[](s7_int i) { return i == 0 ? x : y; }
 };
 
+v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
+v2 operator*(v2 v, double x) { return v2 { v.x * x, v.y * x }; }
+
 void test_v2()
 {
     s7::Scheme scheme;
+    auto v2_to_string = [](v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); };
     scheme.make_usertype<v2>("v2",
         s7::Constructors("v2",
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
-            [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }
-        ),
-        s7::Op::ToString,
-        [](v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); }
+            [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
+        s7_inlet(scheme.ptr(), scheme.nil()),
+        s7::Op::ToString, v2_to_string
     );
+    auto vec1 = 4 * v2 { 4, 5 };
+    auto vec2 = v2 { 4, 5 } * 3;
+    printf("%s\n", v2_to_string(vec1).c_str());
+    printf("%s\n", v2_to_string(vec2).c_str());
     scheme.repl();
 }
 
@@ -211,8 +219,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
-    // test_v2();
+    // test_set();
+    test_v2();
     // test_star_fns();
     // test_varargs();
 }
