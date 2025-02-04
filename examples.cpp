@@ -78,8 +78,8 @@ void example_listener_dax()
 
     scheme.make_usertype<dax>("dax",
         s7::Constructors(
-            [&](double x) { return scheme.make_c_object(new dax { .x = x, .data = scheme.nil() }); },
-            [&](double x, s7_pointer p) { return scheme.make_c_object(new dax { .x = x, .data = p }); }
+            [&](double x) { return dax { .x = x, .data = scheme.nil() }; },
+            [&](double x, s7_pointer p) { return dax { .x = x, .data = p }; }
         ),
         s7::Op::GcMark, [&](dax &dax) -> void { scheme.mark(dax.data); },
         s7::Op::Equal,  [&](dax &d1, dax &d2) -> bool {
