@@ -81,7 +81,6 @@ void example_listener_dax()
             [&](double x) { return scheme.make_c_object(new dax { .x = x, .data = scheme.nil() }); },
             [&](double x, s7_pointer p) { return scheme.make_c_object(new dax { .x = x, .data = p }); }
         ),
-        s7_inlet(scheme.ptr(), scheme.nil()),
         s7::Op::GcMark, [&](dax &dax) -> void { scheme.mark(dax.data); },
         s7::Op::Equal,  [&](dax &d1, dax &d2) -> bool {
             return d1.x == d2.x && s7_is_equal(scheme.ptr(), d1.data, d2.data);

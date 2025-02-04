@@ -146,7 +146,6 @@ void test_set()
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
         s7::Constructors([&]() { return Set(scheme); }),
-        s7_inlet(scheme.ptr(), scheme.nil()),
         s7::Op::GcMark,   [&](Set &s) { return s.gc_mark(scheme); },
         s7::Op::ToString, [&](Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
@@ -174,7 +173,6 @@ void test_v2()
         s7::Constructors("v2",
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
-        s7_inlet(scheme.ptr(), scheme.nil()),
         s7::Op::ToString, v2_to_string,
         s7::MathOp::Add, &v2::operator+=
     );

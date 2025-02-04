@@ -1150,6 +1150,95 @@ public:
     {
         return _make_constructor<T>(detail::as_lambda(fns)...);
     }
+    
+    template <typename T, typename F>
+    void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
+        requires (FunctionTraits<F>::arity == 1)
+    {
+        auto set_func = op == Op::Copy     ? s7_c_type_set_copy
+                      : op == Op::Reverse  ? s7_c_type_set_reverse
+                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
+                      : op == Op::GcFree   ? s7_c_type_set_gc_free
+                      : op == Op::Length   ? s7_c_type_set_length
+                      : op == Op::ToString ? s7_c_type_set_to_string
+                      : op == Op::ToList   ? s7_c_type_set_to_list
+                      :                      s7_c_type_set_ref;
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        if (op == Op::GcMark) {
+            auto fn2 = detail::as_lambda(fn);
+            auto f = detail::make_s7_function(sc, _name, [fn2](s7_pointer obj) -> s7_pointer {
+                auto obj_let = s7_c_object_let(obj);
+                s7_mark(obj_let);
+                fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
+                return nullptr;
+            });
+            set_func(sc, tag, f);
+        } else {
+            auto f = detail::make_s7_function(sc, _name, fn);
+            set_func(sc, tag, f);
+        }
+    }
+
+    template <typename T, typename F>
+    void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
+    {
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        auto f = detail::make_s7_function(sc, _name, fn);
+        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
+                      : op == Op::Copy     ? s7_c_type_set_copy
+                      : op == Op::Fill     ? s7_c_type_set_fill
+                      : op == Op::Reverse  ? s7_c_type_set_reverse
+                      : op == Op::Length   ? s7_c_type_set_length
+                      : op == Op::ToString ? s7_c_type_set_to_string
+                      : op == Op::ToList   ? s7_c_type_set_to_list
+                      : op == Op::Ref      ? s7_c_type_set_ref
+                      :                      s7_c_type_set_set;
+        set_func(sc, tag, f);
+    }
+
+    template <typename T, typename F>
+    void usertype_add_math_op(std::string_view name, s7_pointer let, MathOp op, F &&fn)
+    {
+        if (op == MathOp::Add) {
+            // put fn as a method
+            auto _name  = std::format("+ ({} method)", name);
+            auto _name2 = s7_string(save_string(_name));
+            auto add_method = make_function(_name2, "custom + method for usertype", fn);
+            s7_define(sc, let, s7_make_symbol(sc, "+"), add_method);
+            // substitute +
+            auto old_add = s7_name_to_value(sc, "+");
+            auto new_add = [this, old_add](VarArgs<s7_pointer> args) -> s7_pointer {
+                if (args.size() == 0) {
+                    return s7_make_integer(sc, 0);
+                }
+                if (args.size() == 1) {
+                    return args.car();
+                }
+                auto res = args.advance();
+                for (auto arg : args) {
+                    if (s7_is_c_object(res)) {
+                        auto method = s7_method(sc, s7_c_object_let(res), s7_make_symbol(sc, "+"));
+                        if (method == s7_undefined(sc)) {
+                            s7_wrong_type_arg_error(sc, "+", 0, res, "something");
+                        }
+                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
+                    } else if (s7_is_c_object(arg)) {
+                        auto method = s7_method(sc, s7_c_object_let(arg), s7_make_symbol(sc, "+"));
+                        if (method == s7_undefined(sc)) {
+                            s7_wrong_type_arg_error(sc, "+", 0, arg, "something");
+                        }
+                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
+                    } else {
+                        res = s7_call(sc, old_add, s7_list(sc, 2, res, arg));
+                    }
+                }
+                return res;
+            };
+            define_varargs_function("+", "(+ ...) adds its arguments", new_add);
+        }
+    }
 
     template <typename T, typename... Fns>
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let)
@@ -1261,55 +1350,34 @@ public:
         return tag;
     }
 
-    template <typename T, typename F, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors,
-        s7_pointer let, Op op, F &&fn, auto&&... args)
-        requires (FunctionTraits<F>::arity == 1)
+    template <typename T, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors)
     {
-        auto tag = make_usertype<T>(name, constructors, let, args...);
-        auto set_func = op == Op::Copy     ? s7_c_type_set_copy
-                      : op == Op::Reverse  ? s7_c_type_set_reverse
-                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
-                      : op == Op::GcFree   ? s7_c_type_set_gc_free
-                      : op == Op::Length   ? s7_c_type_set_length
-                      : op == Op::ToString ? s7_c_type_set_to_string
-                      : op == Op::ToList   ? s7_c_type_set_to_list
-                      :                      s7_c_type_set_ref;
-        auto func_name = std::format("{}-op", name);
-        auto _name = s7_string(save_string(func_name));
-        if (op == Op::GcMark) {
-            auto fn2 = detail::as_lambda(fn);
-            auto f = detail::make_s7_function(sc, _name, [fn2](s7_pointer obj) -> s7_pointer {
-                auto obj_let = s7_c_object_let(obj);
-                s7_mark(obj_let);
-                fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
-                return nullptr;
-            });
-            set_func(sc, tag, f);
-        } else {
-            auto f = detail::make_s7_function(sc, _name, fn);
-            set_func(sc, tag, f);
-        }
-        return tag;
+        return make_usertype<T>(name, constructors, s7_inlet(sc, s7_nil(sc)));
     }
 
     template <typename T, typename F, typename... Fns>
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, Op op, F &&fn, auto&&... args)
     {
         auto tag = make_usertype<T>(name, constructors, let, args...);
-        auto func_name = std::format("{}-op", name);
-        auto _name = s7_string(save_string(func_name));
-        auto f = detail::make_s7_function(sc, _name, fn);
-        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
-                      : op == Op::Copy     ? s7_c_type_set_copy
-                      : op == Op::Fill     ? s7_c_type_set_fill
-                      : op == Op::Reverse  ? s7_c_type_set_reverse
-                      : op == Op::Length   ? s7_c_type_set_length
-                      : op == Op::ToString ? s7_c_type_set_to_string
-                      : op == Op::ToList   ? s7_c_type_set_to_list
-                      : op == Op::Ref      ? s7_c_type_set_ref
-                      :                      s7_c_type_set_set;
-        set_func(sc, tag, f);
+        usertype_add_op<T>(name, tag, op, fn);
+        return tag;
+    }
+
+    template <typename T, typename F, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, Op op, F &&fn, auto&&... args)
+    {
+        auto tag = make_usertype<T>(name, constructors, args...);
+        usertype_add_op<T>(name, tag, op, fn);
+        return tag;
+    }
+
+    template <typename T, typename F, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, MathOp op, F &&fn, auto&&... args)
+    {
+        auto let = s7_inlet(sc, s7_nil(sc));
+        auto tag = make_usertype<T>(name, constructors, let, args...);
+        usertype_add_math_op<T>(name, let, op, fn);
         return tag;
     }
 
@@ -1317,43 +1385,7 @@ public:
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MathOp op, F &&fn, auto&&... args)
     {
         auto tag = make_usertype<T>(name, constructors, let, args...);
-        if (op == MathOp::Add) {
-            // put fn as a method
-            auto _name  = std::format("+ ({} method)", name);
-            auto _name2 = s7_string(save_string(_name));
-            auto add_method = make_function(_name2, "custom + method for usertype", fn);
-            s7_define(sc, let, s7_make_symbol(sc, "+"), add_method);
-            // substitute +
-            auto old_add = s7_name_to_value(sc, "+");
-            auto new_add = [this, old_add](VarArgs<s7_pointer> args) -> s7_pointer {
-                if (args.size() == 0) {
-                    return s7_make_integer(sc, 0);
-                }
-                if (args.size() == 1) {
-                    return args.car();
-                }
-                auto res = args.advance();
-                for (auto arg : args) {
-                    if (s7_is_c_object(res)) {
-                        auto method = s7_method(sc, s7_c_object_let(res), s7_make_symbol(sc, "+"));
-                        if (method == s7_undefined(sc)) {
-                            s7_wrong_type_arg_error(sc, "+", 0, res, "something");
-                        }
-                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
-                    } else if (s7_is_c_object(arg)) {
-                        auto method = s7_method(sc, s7_c_object_let(arg), s7_make_symbol(sc, "+"));
-                        if (method == s7_undefined(sc)) {
-                            s7_wrong_type_arg_error(sc, "+", 0, arg, "something");
-                        }
-                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
-                    } else {
-                        res = s7_call(sc, old_add, s7_list(sc, 2, res, arg));
-                    }
-                }
-                return res;
-            };
-            define_varargs_function("+", "(+ ...) adds its arguments", new_add);
-        }
+        usertype_add_math_op<T>(name, let, op, fn);
         return tag;
     }
 
