@@ -159,6 +159,8 @@ struct v2 {
     double x, y;
 
     double &operator[](s7_int i) { return i == 0 ? x : y; }
+
+    v2 operator+=(const v2 &v) const { return v2 { .x = x + v.x, .y = y + v.y }; }
 };
 
 v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
@@ -173,7 +175,8 @@ void test_v2()
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
         s7_inlet(scheme.ptr(), scheme.nil()),
-        s7::Op::ToString, v2_to_string
+        s7::Op::ToString, v2_to_string,
+        s7::MathOp::Add, &v2::operator+=
     );
     auto vec1 = 4 * v2 { 4, 5 };
     auto vec2 = v2 { 4, 5 } * 3;

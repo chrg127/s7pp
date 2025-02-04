@@ -351,6 +351,14 @@ std::optional<T> to_opt(s7_scheme *sc, s7_pointer p)
 }
 
 template <typename T>
+s7_pointer make_c_object(s7_scheme *sc, s7_int tag, T *p)
+{
+    auto obj = s7_make_c_object(sc, tag, reinterpret_cast<void *>(p));
+    s7_c_object_set_let(sc, obj, s7_openlet(sc, detail::get_type_let<T>(sc)));
+    return obj;
+}
+
+template <typename T>
 s7_pointer from(s7_scheme *sc, const T &x)
 {
          if constexpr(std::is_same_v<T, s7_pointer>)                                      { return x;                                                   }
@@ -396,7 +404,7 @@ s7_pointer from(s7_scheme *sc, const T &x)
         return vec;
     } else {
         auto tag = detail::get_type_tag<T>(sc);
-        return s7_make_c_object(sc, tag, reinterpret_cast<void *>(new T(x)));
+        return make_c_object(sc, tag, reinterpret_cast<void *>(new T(x)));
     }
 }
 
@@ -445,8 +453,7 @@ s7_pointer from(s7_scheme *sc, T &&x)
         }
         return vec;
     } else {
-        auto tag = detail::get_type_tag<T>(sc);
-        return s7_make_c_object(sc, tag, reinterpret_cast<void *>(new T(std::move(x))));
+        return make_c_object(sc, detail::get_type_tag<T>(sc), new T(std::move(x)));
     }
 }
 
@@ -825,9 +832,7 @@ class Scheme {
             auto it = std::find_if(results.begin(), results.end(),
                 [](s7_pointer p) { return p != nullptr; });
             if (it != results.end()) {
-                auto obj = *it;
-                s7_c_object_set_let(sc, obj, detail::get_type_let<T>(sc));
-                return obj;
+                return *it;
             }
 
             std::vector<s7_pointer> types;
@@ -936,7 +941,7 @@ public:
     template <typename T>
     s7_pointer make_c_object(T *p)
     {
-        return s7_make_c_object(this->sc, detail::get_type_tag<T>(sc), reinterpret_cast<void *>(p));
+        return s7::make_c_object(sc, detail::get_type_tag<T>(sc), p);
     }
 
     /* errors */
@@ -1166,13 +1171,13 @@ public:
             auto ctor_name = std::format("make-{}", name);
             auto doc = std::format("(make-{}) creates a new {}", name, name);
             define_function(s7_string(save_string(ctor_name)), doc.c_str(), [this, tag]() -> s7_pointer {
-                return s7_make_c_object(this->sc, tag, reinterpret_cast<void *>(new T()));
+                return s7::make_c_object(sc, tag, new T());
             });
         } else if constexpr(requires { T(*this); }) {
             auto ctor_name = std::format("make-{}", name);
             auto doc = std::format("(make-{}) creates a new {}", name, name);
             define_function(s7_string(save_string(ctor_name)), doc.c_str(), [this, tag]() -> s7_pointer {
-                return s7_make_c_object(sc, tag, reinterpret_cast<void *>(new T(*this)));
+                return s7::make_c_object(sc, tag, new T(*this));
             });
         }
 
@@ -1299,8 +1304,6 @@ public:
                       : op == Op::Copy     ? s7_c_type_set_copy
                       : op == Op::Fill     ? s7_c_type_set_fill
                       : op == Op::Reverse  ? s7_c_type_set_reverse
-                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
-                      : op == Op::GcFree   ? s7_c_type_set_gc_free
                       : op == Op::Length   ? s7_c_type_set_length
                       : op == Op::ToString ? s7_c_type_set_to_string
                       : op == Op::ToList   ? s7_c_type_set_to_list
@@ -1310,43 +1313,49 @@ public:
         return tag;
     }
 
-    // template <typename T, typename F, typename... Fns>
-    // s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MathOp op, F &&fn, auto&&... args)
-    // {
-        // signal that the object has an openlet
-        // add functions to object's let in ctor
-        // install a new definition of the math op that will check any c-object's let
-
-//         auto old_add = (*this)["+"];
-//         auto new_add = [old_add](s7_scheme *sc, s7_pointer _args) -> s7_pointer {
-//             auto args = List(_args);
-//             if (args.size() == 0) {
-//                 return s7_make_integer(sc, 0);
-//             }
-//             if (args.size() == 1) {
-//                 return args.car();
-//             }
-//             auto res = l.advance();
-//             for (auto arg = l.advance(); !l.at_end(); arg = l.advance()) {
-//                 if (s7_is_c_object(res)) {
-//                     auto method = s7_method(sc, res, s7_make_symbol("+"));
-//                     if (method == s7_undefined(sc)) {
-//                         s7_wrong_type_arg_error(sc, "+", 0, res, "a real");
-//                     }
-//                     res = s7_call(sc, method, s7_list(sc, 2, res, arg));
-//                 } else if (s7_is_c_object(arg)) {
-//                     auto method = s7_method(sc, arg, s7_make_symbol("+"));
-//                     if (method == s7_undefined(sc)) {
-//                         s7_wrong_type_arg_error(sc, "+", 0, arg, "a real");
-//                     }
-//                     res = s7_call(sc, method, s7_list(sc, 2, res, arg));
-//                 } else {
-//                     res = s7_call(sc, old_add, s7_list(sc, 2, res, arg));
-//                 }
-//             }
-//         }
-//         s7_define_function(sc, "+", new_add, 0, 0, true, "(+ ...) adds its arguments");
-    // }
+    template <typename T, typename F, typename... Fns>
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MathOp op, F &&fn, auto&&... args)
+    {
+        auto tag = make_usertype<T>(name, constructors, let, args...);
+        if (op == MathOp::Add) {
+            // put fn as a method
+            auto _name  = std::format("+ ({} method)", name);
+            auto _name2 = s7_string(save_string(_name));
+            auto add_method = make_function(_name2, "custom + method for usertype", fn);
+            s7_define(sc, let, s7_make_symbol(sc, "+"), add_method);
+            // substitute +
+            auto old_add = s7_name_to_value(sc, "+");
+            auto new_add = [this, old_add](VarArgs<s7_pointer> args) -> s7_pointer {
+                if (args.size() == 0) {
+                    return s7_make_integer(sc, 0);
+                }
+                if (args.size() == 1) {
+                    return args.car();
+                }
+                auto res = args.advance();
+                for (auto arg : args) {
+                    if (s7_is_c_object(res)) {
+                        auto method = s7_method(sc, s7_c_object_let(res), s7_make_symbol(sc, "+"));
+                        if (method == s7_undefined(sc)) {
+                            s7_wrong_type_arg_error(sc, "+", 0, res, "something");
+                        }
+                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
+                    } else if (s7_is_c_object(arg)) {
+                        auto method = s7_method(sc, s7_c_object_let(arg), s7_make_symbol(sc, "+"));
+                        if (method == s7_undefined(sc)) {
+                            s7_wrong_type_arg_error(sc, "+", 0, arg, "something");
+                        }
+                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
+                    } else {
+                        res = s7_call(sc, old_add, s7_list(sc, 2, res, arg));
+                    }
+                }
+                return res;
+            };
+            define_varargs_function("+", "(+ ...) adds its arguments", new_add);
+        }
+        return tag;
+    }
 
     // also known as dilambda, but that is such a bad name (although technically right)
     template <typename F, typename G>
