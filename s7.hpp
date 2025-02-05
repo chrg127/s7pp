@@ -8,6 +8,7 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <utility>
 #include <array>
@@ -399,6 +400,15 @@ enum class MathOp {
     Add, Sub, Mul, Div
 };
 
+template <MathOp op>
+constexpr std::string_view math_op_fn()
+{
+    if constexpr(op == MathOp::Add) { return "+"; }
+    if constexpr(op == MathOp::Sub) { return "-"; }
+    if constexpr(op == MathOp::Mul) { return "*"; }
+    if constexpr(op == MathOp::Div) { return "/"; }
+}
+
 template <typename... Fns>
 struct Constructors {
     std::string_view name = "";
@@ -412,6 +422,8 @@ struct Variable;
 
 class Scheme {
     s7_scheme *sc;
+    // NOTE: these fields can't be accessed inside non-capturing lambdas
+    std::unordered_set<MathOp> substitured_ops;
 
     Type type_of(s7_pointer p)
     {
@@ -695,6 +707,43 @@ class Scheme {
         };
     }
 
+    template <MathOp op>
+    auto make_math_op_function()
+    {
+        auto old = s7_name_to_value(sc, math_op_fn<op>().data());
+        return [this, old](VarArgs<s7_pointer> args) -> s7_pointer {
+            constexpr auto Name = math_op_fn<op>();
+            if (args.size() == 0) {
+                return call(old, nil());
+            } else if (args.size() == 0) {
+                auto p = args.car();
+                if (s7_is_c_object(p)) {
+                    auto method = s7_method(sc, s7_c_object_let(p), s7_make_symbol(sc, Name.data()));
+                    if (method == s7_undefined(sc)) {
+                        s7_wrong_type_arg_error(sc, Name.data(), 0, p, "a c-object that defines +");
+                    }
+                    return call(method, p);
+                } else {
+                    return call(old, p);
+                }
+            }
+            auto res = args.advance();
+            for (auto arg : args) {
+                if (s7_is_c_object(res) || s7_is_c_object(arg)) {
+                    auto p = s7_is_c_object(res) ? res : arg;
+                    auto method = s7_method(sc, s7_c_object_let(p), s7_make_symbol(sc, Name.data()));
+                    if (method == s7_undefined(sc)) {
+                        s7_wrong_type_arg_error(sc, Name.data(), 0, res, "a c-object that defines +");
+                    }
+                    res = call(method, res, arg);
+                } else {
+                    res = call(old, res, arg);
+                }
+            }
+            return res;
+        };
+    }
+
 public:
     Scheme() : sc(s7_init()) {}
 
@@ -971,6 +1020,12 @@ public:
         return s7_call(sc, s7_name_to_value(sc, name.data()), list(args...).ptr());
     }
 
+    template <typename... T>
+    s7_pointer call(s7_pointer func, T&&... args)
+    {
+        return s7_call(sc, func, list(args...).ptr());
+    }
+
     s7_pointer apply(s7_pointer fn, s7_pointer list) { return s7_apply_function(sc, fn, list); }
     s7_pointer apply(s7_pointer fn, List list) { return s7_apply_function(sc, fn, list.ptr()); }
 
@@ -1149,42 +1204,27 @@ public:
     template <typename T, typename F>
     void usertype_add_math_op(std::string_view name, s7_pointer let, MathOp op, F &&fn)
     {
-        if (op == MathOp::Add) {
-            // put fn as a method
-            auto _name  = std::format("+ ({} method)", name);
-            auto _name2 = s7_string(save_string(_name));
-            auto add_method = make_function(_name2, "custom + method for usertype", fn);
-            s7_define(sc, let, s7_make_symbol(sc, "+"), add_method);
-            // substitute +
-            auto old_add = s7_name_to_value(sc, "+");
-            auto new_add = [this, old_add](VarArgs<s7_pointer> args) -> s7_pointer {
-                if (args.size() == 0) {
-                    return s7_make_integer(sc, 0);
-                }
-                if (args.size() == 1) {
-                    return args.car();
-                }
-                auto res = args.advance();
-                for (auto arg : args) {
-                    if (s7_is_c_object(res)) {
-                        auto method = s7_method(sc, s7_c_object_let(res), s7_make_symbol(sc, "+"));
-                        if (method == s7_undefined(sc)) {
-                            s7_wrong_type_arg_error(sc, "+", 0, res, "something");
-                        }
-                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
-                    } else if (s7_is_c_object(arg)) {
-                        auto method = s7_method(sc, s7_c_object_let(arg), s7_make_symbol(sc, "+"));
-                        if (method == s7_undefined(sc)) {
-                            s7_wrong_type_arg_error(sc, "+", 0, arg, "something");
-                        }
-                        res = s7_call(sc, method, s7_list(sc, 2, res, arg));
-                    } else {
-                        res = s7_call(sc, old_add, s7_list(sc, 2, res, arg));
-                    }
-                }
-                return res;
-            };
-            define_varargs_function("+", "(+ ...) adds its arguments", new_add);
+        auto opname = op == MathOp::Add ? "+"
+                    : op == MathOp::Sub ? "-"
+                    : op == MathOp::Mul ? "*"
+                    : op == MathOp::Div ? "/"
+                    : "";
+        auto doc    = op == MathOp::Add ? "(+ ...) adds its arguments"
+                    : op == MathOp::Sub ? "(- ...) subtracts its trailing arguments from the first, or negates the first if only one it is given"
+                    : op == MathOp::Mul ? "(* ...) multiplies its arguments"
+                    : op == MathOp::Div ? "(/ x1 ...) divides its first argument by the rest, or inverts the first if there is only one argument"
+                    : "";
+        // put fn as a method
+        auto _name = std::format("{} ({} method)", opname, name);
+        auto add_method = make_function(_name, "custom method for usertype", fn);
+        s7_define(sc, let, s7_make_symbol(sc, opname), add_method);
+        // substitute op
+        if (!substitured_ops.contains(op)) {
+                 if (op == MathOp::Add) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Add>()); }
+            else if (op == MathOp::Sub) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Sub>()); }
+            else if (op == MathOp::Mul) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Mul>()); }
+            else if (op == MathOp::Div) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Div>()); }
+            substitured_ops.insert(op);
         }
     }
 

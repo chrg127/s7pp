@@ -159,27 +159,28 @@ struct v2 {
 
     double &operator[](s7_int i) { return i == 0 ? x : y; }
 
-    v2 operator+=(const v2 &v) const { return v2 { .x = x + v.x, .y = y + v.y }; }
+    v2 operator+=(const v2 &v) const
+    {
+        return v2 { .x = x + v.x,
+                    .y = y + v.y };
+    }
 };
 
-v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
+// v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
 v2 operator*(v2 v, double x) { return v2 { v.x * x, v.y * x }; }
 
 void test_v2()
 {
     s7::Scheme scheme;
-    auto v2_to_string = [](v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); };
     scheme.make_usertype<v2>("v2",
         s7::Constructors("v2",
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
-        s7::Op::ToString, v2_to_string,
-        s7::MathOp::Add, &v2::operator+=
+        s7::Op::ToString, [](v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
+        s7::MathOp::Add, &v2::operator+=,
+        s7::MathOp::Sub, [](v2 &a, v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
+        s7::MathOp::Mul, [](v2 v, double x) { return v2 { v.x * x, v.y * x }; }
     );
-    auto vec1 = 4 * v2 { 4, 5 };
-    auto vec2 = v2 { 4, 5 } * 3;
-    printf("%s\n", v2_to_string(vec1).c_str());
-    printf("%s\n", v2_to_string(vec2).c_str());
     scheme.repl();
 }
 

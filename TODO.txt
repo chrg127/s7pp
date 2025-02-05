@@ -1,8 +1,10 @@
 have to do:
-- math ops
 - more checks when defining ops on usertypes
 - add function support inside Variable
 - add defines for debug/release
+- support for creating an s7 function that matches multiple functions
+  (same mechanism as constructors, except extended to normal functions)
+  (probably only requires a rename for constructor stuff)
 
 probably won't do soon:
 - (possibly) ports
