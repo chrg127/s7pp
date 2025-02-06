@@ -387,8 +387,8 @@ struct WrongArgsNumber {
 } // errors
 
 struct FunctionOpts {
-    bool unsafe_body;
-    bool unsafe_arglist;
+    bool unsafe_body = false;
+    bool unsafe_arglist = false;
 };
 
 enum class Op {
@@ -410,12 +410,18 @@ constexpr std::string_view math_op_fn()
 }
 
 template <typename... Fns>
+struct Overload {
+    std::tuple<Fns...> fns;
+    explicit Overload(Fns&&... fns) : fns(fns...) {}
+};
+
+template <typename... Fns>
 struct Constructors {
     std::string_view name = "";
-    std::tuple<Fns...> fns;
+    Overload<Fns...> overload;
 
-    explicit Constructors(Fns&&... fns) : fns(fns...) {}
-    explicit Constructors(std::string_view name, Fns&&... fns) : name(name), fns(fns...) {}
+    explicit Constructors(Fns&&... fns) : name(""), overload(std::forward<Fns>(fns)...) {}
+    explicit Constructors(std::string_view name, Fns&&... fns) : name(name), overload(std::forward<Fns>(fns)...) {}
 };
 
 struct Variable;
@@ -664,8 +670,8 @@ class Scheme {
         }
     }
 
-    template <typename T, typename... Fns>
-    s7_function _make_constructor(Fns&&... fns)
+    template <typename... Fns>
+    s7_function _make_overload(Fns&&... fns)
     {
         constexpr auto NumFns = sizeof...(Fns);
         auto set = []<typename F>(F &&fn) {
@@ -681,8 +687,8 @@ class Scheme {
             };
 
             auto make_message = [&](int n) -> s7_pointer {
-                auto str = std::string("no constructor found for argument types: ~a\n"
-                                       ";valid constructors:");
+                auto str = std::string("arglist ~a doesn't match any signature for this function\n"
+                                       ";valid signatures:");
                 for (auto i = 0; i < n; i++) {
                     str += "\n;~a";
                 }
@@ -699,7 +705,7 @@ class Scheme {
             for (auto arg : s7::List(args)) {
                 types.push_back(s7_make_symbol(sc, type_to_string(scheme.type_of(arg))));
             }
-            return s7_error(sc, s7_make_symbol(sc, "ctor-mismatch"), scheme.list(
+            return s7_error(sc, s7_make_symbol(sc, "no-overload-match"), scheme.list(
                 make_message(NumFns),
                 s7_array_to_list(sc, types.size(), types.data()),
                 scheme.make_signature(&std::remove_cvref_t<Fns>::operator())...
@@ -815,51 +821,103 @@ public:
     }
 
     template <typename T>
-    s7_pointer from(T &&x)
+    s7_pointer from(const T &x)
     {
-             if constexpr(std::is_same_v<T, s7_pointer>)                                      { return x;                                                   }
-        else if constexpr(std::is_same_v<T, bool>)                                            { return s7_make_boolean(sc, x);                              }
-        else if constexpr(std::is_same_v<T, s7_int> || std::is_same_v<T, int>
-                       || std::is_same_v<T, short> || std::is_same_v<T, long>)                { return s7_make_integer(sc, x);                              }
-        else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>)              { return s7_make_real(sc, x);                                 }
-        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<T>>, char *>)       { return s7_make_string(sc, x);                               }
-        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<T>>, const char *>) { return s7_make_string(sc, x);                               }
-        else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>)                { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
-        else if constexpr(std::is_same_v<T, std::string_view>)                                { return s7_make_string_with_length(sc, x.data(), x.size());  }
-        else if constexpr(std::is_same_v<T, unsigned char>)                                   { return s7_make_character(sc, x);                            }
-        else if constexpr(std::is_pointer_v<T>)                                               { return s7_make_c_pointer(sc, x);                            }
-        else if constexpr(std::is_same_v<T, List>)                                            { return x.ptr();                                             }
-        else if constexpr(std::is_same_v<T, Values>)                                          { return x.p;                                                 }
-        else if constexpr(std::is_same_v<T, std::span<s7_pointer>> || std::is_same_v<T, std::vector<s7_pointer>>) {
+        using Type = std::remove_cvref_t<T>;
+             if constexpr(std::is_same_v<Type, s7_pointer>)                                      { return x;                                                   }
+        else if constexpr(std::is_same_v<Type, bool>)                                            { return s7_make_boolean(sc, x);                              }
+        else if constexpr(std::is_same_v<Type, s7_int> || std::is_same_v<Type, int>
+                       || std::is_same_v<Type, short> || std::is_same_v<Type, long>)                { return s7_make_integer(sc, x);                              }
+        else if constexpr(std::is_same_v<Type, double> || std::is_same_v<Type, float>)              { return s7_make_real(sc, x);                                 }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, char *>)       { return s7_make_string(sc, x);                               }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, const char *>) { return s7_make_string(sc, x);                               }
+        else if constexpr(std::is_same_v<Type, std::string>)                { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
+        else if constexpr(std::is_same_v<Type, std::string_view>)                                { return s7_make_string_with_length(sc, x.data(), x.size());  }
+        else if constexpr(std::is_same_v<Type, unsigned char>)                                   { return s7_make_character(sc, x);                            }
+        else if constexpr(std::is_pointer_v<Type>)                                               { return s7_make_c_pointer(sc, x);                            }
+        else if constexpr(std::is_same_v<Type, List>)                                            { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, Values>)                                          { return x.p;                                                 }
+        else if constexpr(std::is_same_v<Type, std::span<s7_pointer>> || std::is_same_v<Type, std::vector<s7_pointer>>) {
             auto vec = s7_make_vector(sc, x.size());
             for (size_t i = 0; i < x.size(); i++) {
                 s7_vector_set(sc, vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_same_v<T, std::span<s7_int>> || std::is_same_v<T, std::vector<s7_int>>
-                         || std::is_same_v<T, std::span<int>>    || std::is_same_v<T, std::vector<int>>
-                         || std::is_same_v<T, std::span<short>>  || std::is_same_v<T, std::vector<short>>
-                         || std::is_same_v<T, std::span<long>>   || std::is_same_v<T, std::vector<long>>) {
+        } else if constexpr(std::is_same_v<Type, std::span<s7_int>> || std::is_same_v<Type, std::vector<s7_int>>
+                         || std::is_same_v<Type, std::span<int>>    || std::is_same_v<Type, std::vector<int>>
+                         || std::is_same_v<Type, std::span<short>>  || std::is_same_v<Type, std::vector<short>>
+                         || std::is_same_v<Type, std::span<long>>   || std::is_same_v<Type, std::vector<long>>) {
             auto vec = s7_make_int_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_int_vector_set(vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_same_v<T, std::span<double>> || std::is_same_v<T, std::vector<double>>
-                         || std::is_same_v<T, std::span<float>>  || std::is_same_v<T, std::vector<float>>) {
+        } else if constexpr(std::is_same_v<Type, std::span<double>> || std::is_same_v<Type, std::vector<double>>
+                         || std::is_same_v<Type, std::span<float>>  || std::is_same_v<Type, std::vector<float>>) {
             auto vec = s7_make_float_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_float_vector_set(vec, i, x[i]);
             }
             return vec;
-        } else if constexpr(std::is_same_v<T, std::span<uint8_t>> || std::is_same_v<T, std::vector<uint8_t>>) {
+        } else if constexpr(std::is_same_v<Type, std::span<uint8_t>> || std::is_same_v<Type, std::vector<uint8_t>>) {
             auto vec = s7_make_byte_vector(sc, x.size(), 1, nullptr);
             for (size_t i = 0; i < x.size(); i++) {
                 s7_byte_vector_set(vec, i, x[i]);
             }
             return vec;
         } else {
-            using Type = std::remove_cvref_t<T>;
+            using Type = std::remove_cvref_t<Type>;
+            return make_c_object(new Type(x));
+        }
+    }
+
+    template <typename T>
+    s7_pointer from(T &&x)
+    {
+        using Type = std::remove_cvref_t<T>;
+             if constexpr(std::is_same_v<Type, s7_pointer>)                                      { return x;                                                   }
+        else if constexpr(std::is_same_v<Type, bool>)                                            { return s7_make_boolean(sc, x);                              }
+        else if constexpr(std::is_same_v<Type, s7_int> || std::is_same_v<Type, int>
+                       || std::is_same_v<Type, short> || std::is_same_v<Type, long>)                { return s7_make_integer(sc, x);                              }
+        else if constexpr(std::is_same_v<Type, double> || std::is_same_v<Type, float>)              { return s7_make_real(sc, x);                                 }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, char *>)       { return s7_make_string(sc, x);                               }
+        else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, const char *>) { return s7_make_string(sc, x);                               }
+        else if constexpr(std::is_same_v<Type, std::string>)                { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
+        else if constexpr(std::is_same_v<Type, std::string_view>)                                { return s7_make_string_with_length(sc, x.data(), x.size());  }
+        else if constexpr(std::is_same_v<Type, unsigned char>)                                   { return s7_make_character(sc, x);                            }
+        else if constexpr(std::is_pointer_v<Type>)                                               { return s7_make_c_pointer(sc, x);                            }
+        else if constexpr(std::is_same_v<Type, List>)                                            { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, Values>)                                          { return x.p;                                                 }
+        else if constexpr(std::is_same_v<Type, std::span<s7_pointer>> || std::is_same_v<Type, std::vector<s7_pointer>>) {
+            auto vec = s7_make_vector(sc, x.size());
+            for (size_t i = 0; i < x.size(); i++) {
+                s7_vector_set(sc, vec, i, x[i]);
+            }
+            return vec;
+        } else if constexpr(std::is_same_v<Type, std::span<s7_int>> || std::is_same_v<Type, std::vector<s7_int>>
+                         || std::is_same_v<Type, std::span<int>>    || std::is_same_v<Type, std::vector<int>>
+                         || std::is_same_v<Type, std::span<short>>  || std::is_same_v<Type, std::vector<short>>
+                         || std::is_same_v<Type, std::span<long>>   || std::is_same_v<Type, std::vector<long>>) {
+            auto vec = s7_make_int_vector(sc, x.size(), 1, nullptr);
+            for (size_t i = 0; i < x.size(); i++) {
+                s7_int_vector_set(vec, i, x[i]);
+            }
+            return vec;
+        } else if constexpr(std::is_same_v<Type, std::span<double>> || std::is_same_v<Type, std::vector<double>>
+                         || std::is_same_v<Type, std::span<float>>  || std::is_same_v<Type, std::vector<float>>) {
+            auto vec = s7_make_float_vector(sc, x.size(), 1, nullptr);
+            for (size_t i = 0; i < x.size(); i++) {
+                s7_float_vector_set(vec, i, x[i]);
+            }
+            return vec;
+        } else if constexpr(std::is_same_v<Type, std::span<uint8_t>> || std::is_same_v<Type, std::vector<uint8_t>>) {
+            auto vec = s7_make_byte_vector(sc, x.size(), 1, nullptr);
+            for (size_t i = 0; i < x.size(); i++) {
+                s7_byte_vector_set(vec, i, x[i]);
+            }
+            return vec;
+        } else {
+            using Type = std::remove_cvref_t<Type>;
             return make_c_object(new Type(std::move(x)));
         }
     }
@@ -1035,8 +1093,7 @@ public:
     /* function creation */
 
     // special case for functions that follow s7's standard signature
-    s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn,
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn, FunctionOpts opts = {})
     {
         auto _name = s7_string(save_string(name));
         auto define = opts.unsafe_arglist || opts.unsafe_body
@@ -1046,8 +1103,7 @@ public:
     }
 
     template <typename F>
-    s7_pointer define_function(std::string_view name, std::string_view doc, F &&func,
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    s7_pointer define_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
     {
         constexpr auto NumArgs = FunctionTraits<F>::arity;
         auto _name = s7_string(save_string(name));
@@ -1075,8 +1131,7 @@ public:
     }
 
     template <typename F>
-    void define_varargs_function(std::string_view name, std::string_view doc, F &&func,
-            FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    void define_varargs_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
     {
         auto _name = s7_string(save_string(name));
         auto f = make_s7_function(_name, func);
@@ -1102,8 +1157,7 @@ public:
         s7_define_macro(sc, _name, f, NumArgs, 0, false, doc.data());
     }
 
-    s7_pointer make_function(std::string_view name, std::string_view doc, s7_function fn,
-        FunctionOpts opts = { .unsafe_body = false, .unsafe_arglist = false })
+    s7_pointer make_function(std::string_view name, std::string_view doc, s7_function fn, FunctionOpts opts = {})
     {
         auto _name = s7_string(save_string(name));
         auto make = opts.unsafe_arglist || opts.unsafe_body
@@ -1148,16 +1202,44 @@ public:
     }
 
     /* usertypes */
-    template <typename T, typename... Fns>
-    s7_function make_constructor(Fns&&... fns)
+
+    template <typename... Fns>
+    s7_pointer make_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
     {
-        return _make_constructor<T>(detail::as_lambda(fns)...);
+        constexpr auto MaxArgs = std::max(FunctionTraits<Fns>::arity...);
+        constexpr auto MinArgs = std::min(FunctionTraits<Fns>::arity...);
+        auto f = std::apply([&]<typename ...F>(F &&...fns) {
+            return _make_overload(detail::as_lambda(fns)...);
+        }, overload.fns);
+        auto _name = s7_string(save_string(name));
+        auto make = opts.unsafe_arglist || opts.unsafe_body
+            ? s7_make_function
+            : s7_make_safe_function;
+        return make(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data());
     }
-    
+
+    template <typename... Fns>
+    s7_pointer define_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
+    {
+        constexpr auto MaxArgs = max_arity<Fns...>();
+        constexpr auto MinArgs = min_arity<Fns...>();
+        auto f = std::apply([&]<typename ...F>(F &&...fns) {
+            return _make_overload(detail::as_lambda(fns)...);
+        }, overload.fns);
+        auto _name = s7_string(save_string(name));
+        auto define = opts.unsafe_arglist || opts.unsafe_body
+            ? s7_define_function
+            : s7_define_safe_function;
+        return define(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data());
+    }
+
     template <typename T, typename F>
     void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
-        requires (FunctionTraits<F>::arity == 1)
+        requires (FunctionTraits<F>::arity == 1
+               && (std::is_same_v<T, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
+                || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>))
     {
+        printf("defining op %d\n", static_cast<int>(op));
         auto set_func = op == Op::Copy     ? s7_c_type_set_copy
                       : op == Op::Reverse  ? s7_c_type_set_reverse
                       : op == Op::GcMark   ? s7_c_type_set_gc_mark
@@ -1165,7 +1247,8 @@ public:
                       : op == Op::Length   ? s7_c_type_set_length
                       : op == Op::ToString ? s7_c_type_set_to_string
                       : op == Op::ToList   ? s7_c_type_set_to_list
-                      :                      s7_c_type_set_ref;
+                      : nullptr;
+        assert(set_func && "can't define one of these ops with a multiple argument function");
         auto func_name = std::format("{}-op", name);
         auto _name = s7_string(save_string(func_name));
         if (op == Op::GcMark) {
@@ -1185,24 +1268,27 @@ public:
 
     template <typename T, typename F>
     void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
+        requires (FunctionTraits<F>::arity != 1
+               && (std::is_same_v<T, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
+                || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>))
     {
         auto func_name = std::format("{}-op", name);
         auto _name = s7_string(save_string(func_name));
         auto f = make_s7_function(_name, fn);
         auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
+                      : op == Op::Equivalent ? s7_c_type_set_is_equivalent
                       : op == Op::Copy     ? s7_c_type_set_copy
                       : op == Op::Fill     ? s7_c_type_set_fill
-                      : op == Op::Reverse  ? s7_c_type_set_reverse
-                      : op == Op::Length   ? s7_c_type_set_length
-                      : op == Op::ToString ? s7_c_type_set_to_string
-                      : op == Op::ToList   ? s7_c_type_set_to_list
                       : op == Op::Ref      ? s7_c_type_set_ref
-                      :                      s7_c_type_set_set;
+                      : op == Op::Set      ? s7_c_type_set_set
+                      : nullptr;
+        assert(set_func && "can't define one of these ops with a single argument function");
         set_func(sc, tag, f);
     }
 
     template <typename T, typename F>
     void usertype_add_math_op(std::string_view name, s7_pointer let, MathOp op, F &&fn)
+        //requires (FunctionTraits<F>::arity == 2)
     {
         auto opname = op == MathOp::Add ? "+"
                     : op == MathOp::Sub ? "-"
@@ -1216,7 +1302,7 @@ public:
                     : "";
         // put fn as a method
         auto _name = std::format("{} ({} method)", opname, name);
-        auto add_method = make_function(_name, "custom method for usertype", fn);
+        auto add_method = make_function(_name, "custom method for usertype", std::move(fn));
         s7_define(sc, let, s7_make_symbol(sc, opname), add_method);
         // substitute op
         if (!substitured_ops.contains(op)) {
@@ -1236,13 +1322,12 @@ public:
         detail::TypeTag<T>::let.insert_or_assign(reinterpret_cast<uintptr_t>(sc), let);
 
         if constexpr(sizeof...(Fns) != 0) {
-            auto ctor = std::apply([&]<typename... F>(F &&...fns) { return make_constructor<T>(fns...); }, constructors.fns);
             auto doc = std::format("(make-{}) creates a new {}", name, name);
             if (constructors.name.empty()) {
-                auto ctor_name = std::format("make-{}", name);
-                define_function(s7_string(save_string(ctor_name)), doc.c_str(), ctor);
+                auto _name = std::format("make-{}", name);
+                define_function(_name, doc.c_str(), std::move(constructors.overload));
             } else {
-                define_function(s7_string(save_string(constructors.name)), doc.c_str(), ctor);
+                define_function(constructors.name, doc.c_str(), std::move(constructors.overload));
             }
         } else if constexpr(requires { T(); }) {
             auto ctor_name = std::format("make-{}", name);

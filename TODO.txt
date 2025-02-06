@@ -1,10 +1,10 @@
 have to do:
-- more checks when defining ops on usertypes
 - add function support inside Variable
 - add defines for debug/release
-- support for creating an s7 function that matches multiple functions
-  (same mechanism as constructors, except extended to normal functions)
-  (probably only requires a rename for constructor stuff)
+- resolve() (for passing overloaded functions)
+
+partially completed, not sure if actually completed:
+- more checks when defining ops on usertypes
 
 probably won't do soon:
 - (possibly) ports

@@ -106,14 +106,14 @@ struct Set {
     Set(Set &&) = default;
     Set & operator=(Set &&) = default;
 
-    void gc_mark(s7::Scheme &scheme)
+    void gc_mark(s7::Scheme &scheme) const
     {
         for (s7_pointer value : set) {
             scheme.mark(value);
         }
     }
 
-    std::string to_string(s7::Scheme &scheme)
+    std::string to_string(s7::Scheme &scheme) const
     {
         std::string str = "#<set(";
         for (const s7_pointer &value : set) {
@@ -146,8 +146,8 @@ void test_set()
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
         s7::Constructors([&]() { return Set(scheme); }),
-        s7::Op::GcMark,   [&](Set &s) { return s.gc_mark(scheme); },
-        s7::Op::ToString, [&](Set &s) { return s.to_string(scheme); },
+        s7::Op::GcMark,   [&](const Set &s) { return s.gc_mark(scheme); },
+        s7::Op::ToString, [&](const Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
     );
     scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
@@ -157,6 +157,9 @@ void test_set()
 struct v2 {
     double x, y;
 
+    const double &operator[](s7_int i) const { return i == 0 ? x : y; }
+
+    // maybe it shouldn't define set! if this isn't provided...
     double &operator[](s7_int i) { return i == 0 ? x : y; }
 
     v2 operator+=(const v2 &v) const
@@ -176,11 +179,17 @@ void test_v2()
         s7::Constructors("v2",
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
-        s7::Op::ToString, [](v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
+        s7::Op::ToString, [](const v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
+        // s7::Op::ToString, [](const s7_int &v) -> std::string { return std::format("{}", v); },
         s7::MathOp::Add, &v2::operator+=,
-        s7::MathOp::Sub, [](v2 &a, v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
-        s7::MathOp::Mul, [](v2 v, double x) { return v2 { v.x * x, v.y * x }; }
+        s7::MathOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
+        s7::MathOp::Mul, s7::Overload(
+            [](v2 v, double x) { return v2 { v.x * x, v.y * x }; },
+            [](double x, v2 v) { return v2 { v.x * x, v.y * x }; }
+        ) 
     );
+    scheme.define_property("v2-x", "(v2-x v2) accesses x", [](const v2 &v) { return v.x; }, [](v2 &v, double x) { v.x = x; });
+    scheme.define_property("v2-y", "(v2-y v2) accesses y", [](const v2 &v) { return v.y; }, [](v2 &v, double y) { v.y = y; });
     scheme.repl();
 }
 
