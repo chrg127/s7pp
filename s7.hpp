@@ -403,17 +403,17 @@ enum class Op {
     Length, ToString, ToList, Ref, Set,
 };
 
-enum class MathOp {
+enum class MethodOp {
     Add, Sub, Mul, Div
 };
 
-template <MathOp op>
-constexpr std::string_view math_op_fn()
+template <MethodOp op>
+constexpr std::string_view method_op_fn()
 {
-    if constexpr(op == MathOp::Add) { return "+"; }
-    if constexpr(op == MathOp::Sub) { return "-"; }
-    if constexpr(op == MathOp::Mul) { return "*"; }
-    if constexpr(op == MathOp::Div) { return "/"; }
+    if constexpr(op == MethodOp::Add) { return "+"; }
+    if constexpr(op == MethodOp::Sub) { return "-"; }
+    if constexpr(op == MethodOp::Mul) { return "*"; }
+    if constexpr(op == MethodOp::Div) { return "/"; }
 }
 
 template <typename... Fns>
@@ -436,7 +436,7 @@ struct Variable;
 class Scheme {
     s7_scheme *sc;
     // NOTE: any following field can't be accessed inside non-capturing lambdas
-    std::unordered_set<MathOp> substitured_ops;
+    std::unordered_set<MethodOp> substitured_ops;
 
     template <typename L, typename R, typename... Args>
     s7_pointer _call_fn_impl(s7_pointer args)
@@ -633,12 +633,12 @@ class Scheme {
         };
     }
 
-    template <MathOp op>
-    auto make_math_op_function()
+    template <MethodOp op>
+    auto make_method_op_function()
     {
-        auto old = s7_name_to_value(sc, math_op_fn<op>().data());
+        auto old = s7_name_to_value(sc, method_op_fn<op>().data());
         return [this, old](VarArgs<s7_pointer> args) -> s7_pointer {
-            constexpr auto Name = math_op_fn<op>();
+            constexpr auto Name = method_op_fn<op>();
             if (args.size() == 0) {
                 return call(old, nil());
             } else if (args.size() == 0) {
@@ -1109,8 +1109,8 @@ public:
     template <typename... Fns>
     s7_pointer make_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
     {
-        constexpr auto MaxArgs = std::max(FunctionTraits<Fns>::arity...);
-        constexpr auto MinArgs = std::min(FunctionTraits<Fns>::arity...);
+        constexpr auto MaxArgs = max_arity<Fns...>();
+        constexpr auto MinArgs = min_arity<Fns...>();
         auto f = std::apply([&]<typename ...F>(F &&...fns) {
             return _make_overload(detail::as_lambda(fns)...);
         }, overload.fns);
@@ -1149,70 +1149,56 @@ public:
 private:
     template <typename T, typename F>
     void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
-        requires (FunctionTraits<F>::arity == 1
-               && (std::is_same_v<T, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
-                || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>))
+        requires (std::is_same_v<T,          std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
+               || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>)
     {
-        printf("defining op %d\n", static_cast<int>(op));
-        auto set_func = op == Op::Copy     ? s7_c_type_set_copy
+        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
+                      : op == Op::Equivalent ? s7_c_type_set_is_equivalent
+                      : op == Op::Copy     ? s7_c_type_set_copy
+                      : op == Op::Fill     ? s7_c_type_set_fill
                       : op == Op::Reverse  ? s7_c_type_set_reverse
                       : op == Op::GcMark   ? s7_c_type_set_gc_mark
                       : op == Op::GcFree   ? s7_c_type_set_gc_free
                       : op == Op::Length   ? s7_c_type_set_length
                       : op == Op::ToString ? s7_c_type_set_to_string
                       : op == Op::ToList   ? s7_c_type_set_to_list
-                      : nullptr;
-        assert(set_func && "can't define one of these ops with a multiple argument function");
-        auto func_name = std::format("{}-op", name);
-        auto _name = s7_string(save_string(func_name));
-        if (op == Op::GcMark) {
-            auto fn2 = detail::as_lambda(fn);
-            auto f = make_s7_function(_name, [fn2](s7_pointer obj) -> s7_pointer {
-                auto obj_let = s7_c_object_let(obj);
-                s7_mark(obj_let);
-                fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
-                return nullptr;
-            });
-            set_func(sc, tag, f);
-        } else {
-            auto f = make_s7_function(_name, fn);
-            set_func(sc, tag, f);
-        }
-    }
-
-    template <typename T, typename F>
-    void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
-        requires (FunctionTraits<F>::arity != 1
-               && (std::is_same_v<T, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
-                || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>))
-    {
-        auto func_name = std::format("{}-op", name);
-        auto _name = s7_string(save_string(func_name));
-        auto f = make_s7_function(_name, fn);
-        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
-                      : op == Op::Equivalent ? s7_c_type_set_is_equivalent
-                      : op == Op::Copy     ? s7_c_type_set_copy
-                      : op == Op::Fill     ? s7_c_type_set_fill
                       : op == Op::Ref      ? s7_c_type_set_ref
                       : op == Op::Set      ? s7_c_type_set_set
                       : nullptr;
-        assert(set_func && "can't define one of these ops with a single argument function");
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        s7_function f;
+        if constexpr(FunctionTraits<F>::arity == 1) {
+            if (op == Op::GcMark) {
+                auto fn2 = detail::as_lambda(fn);
+                f = make_s7_function(_name, [fn2](s7_pointer obj) -> s7_pointer {
+                    auto obj_let = s7_c_object_let(obj);
+                    s7_mark(obj_let);
+                    fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
+                    return nullptr;
+                });
+            } else {
+                f = make_s7_function(_name, fn);
+            }
+        } else {
+            f = make_s7_function(_name, fn);
+        }
         set_func(sc, tag, f);
     }
 
     template <typename T, typename F>
-    void usertype_add_math_op(std::string_view name, s7_pointer let, MathOp op, F &&fn)
+    void usertype_add_method_op(std::string_view name, s7_pointer let, MethodOp op, F &&fn)
         //requires (FunctionTraits<F>::arity == 2)
     {
-        auto opname = op == MathOp::Add ? "+"
-                    : op == MathOp::Sub ? "-"
-                    : op == MathOp::Mul ? "*"
-                    : op == MathOp::Div ? "/"
+        auto opname = op == MethodOp::Add ? "+"
+                    : op == MethodOp::Sub ? "-"
+                    : op == MethodOp::Mul ? "*"
+                    : op == MethodOp::Div ? "/"
                     : "";
-        auto doc    = op == MathOp::Add ? "(+ ...) adds its arguments"
-                    : op == MathOp::Sub ? "(- ...) subtracts its trailing arguments from the first, or negates the first if only one it is given"
-                    : op == MathOp::Mul ? "(* ...) multiplies its arguments"
-                    : op == MathOp::Div ? "(/ x1 ...) divides its first argument by the rest, or inverts the first if there is only one argument"
+        auto doc    = op == MethodOp::Add ? "(+ ...) adds its arguments"
+                    : op == MethodOp::Sub ? "(- ...) subtracts its trailing arguments from the first, or negates the first if only one it is given"
+                    : op == MethodOp::Mul ? "(* ...) multiplies its arguments"
+                    : op == MethodOp::Div ? "(/ x1 ...) divides its first argument by the rest, or inverts the first if there is only one argument"
                     : "";
         // put fn as a method
         auto _name = std::format("{} ({} method)", opname, name);
@@ -1220,15 +1206,27 @@ private:
         s7_define(sc, let, s7_make_symbol(sc, opname), add_method);
         // substitute op
         if (!substitured_ops.contains(op)) {
-                 if (op == MathOp::Add) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Add>()); }
-            else if (op == MathOp::Sub) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Sub>()); }
-            else if (op == MathOp::Mul) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Mul>()); }
-            else if (op == MathOp::Div) { define_varargs_function(opname, doc, make_math_op_function<MathOp::Div>()); }
+                 if (op == MethodOp::Add) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Add>()); }
+            else if (op == MethodOp::Sub) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Sub>()); }
+            else if (op == MethodOp::Mul) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Mul>()); }
+            else if (op == MethodOp::Div) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Div>()); }
             substitured_ops.insert(op);
         }
     }
 
 public:
+    template <typename T, typename F>
+    void add_op(Op op, F &&fn)
+    {
+        usertype_add_op(detail::get_type_name<T>(sc), get_type_tag<T>(), op, std::move(fn));
+    }
+
+    template <typename T, typename F>
+    void add_method_op(MethodOp op, F &&fn)
+    {
+        usertype_add_method_op(detail::get_type_name<T>(sc), get_type_let<T>(), op, std::move(fn));
+    }
+
     template <typename T, typename... Fns>
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let)
     {
@@ -1362,19 +1360,19 @@ public:
     }
 
     template <typename T, typename F, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, MathOp op, F &&fn, auto&&... args)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, MethodOp op, F &&fn, auto&&... args)
     {
         auto let = s7_inlet(sc, s7_nil(sc));
         auto tag = make_usertype<T>(name, constructors, let, FWD(args)...);
-        usertype_add_math_op<T>(name, let, op, fn);
+        usertype_add_method_op<T>(name, let, op, fn);
         return tag;
     }
 
     template <typename T, typename F, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MathOp op, F &&fn, auto&&... args)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MethodOp op, F &&fn, auto&&... args)
     {
         auto tag = make_usertype<T>(name, constructors, let, FWD(args)...);
-        usertype_add_math_op<T>(name, let, op, fn);
+        usertype_add_method_op<T>(name, let, op, fn);
         return tag;
     }
 

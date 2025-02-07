@@ -98,8 +98,7 @@ struct Set {
     std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
 
     explicit Set(s7::Scheme &scheme)
-        : set(512, s7::Hash(scheme), s7::Equal(scheme))
-    {}
+        : set(512, s7::Hash(scheme), s7::Equal(scheme)) {}
 
     Set(const Set &) = delete;
     Set & operator=(const Set &) = delete;
@@ -181,9 +180,9 @@ void test_v2()
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
         s7::Op::ToString, [](const v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
         // s7::Op::ToString, [](const s7_int &v) -> std::string { return std::format("{}", v); },
-        s7::MathOp::Add, &v2::operator+=,
-        s7::MathOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
-        s7::MathOp::Mul, s7::Overload(
+        s7::MethodOp::Add, &v2::operator+=,
+        s7::MethodOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
+        s7::MethodOp::Mul, s7::Overload(
             [](v2 v, double x) { return v2 { v.x * x, v.y * x }; },
             [](double x, v2 v) { return v2 { v.x * x, v.y * x }; }
         ) 
