@@ -183,8 +183,8 @@ void test_v2()
         s7::MethodOp::Add, &v2::operator+=,
         s7::MethodOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
         s7::MethodOp::Mul, s7::Overload(
-            [](v2 v, double x) { return v2 { v.x * x, v.y * x }; },
-            [](double x, v2 v) { return v2 { v.x * x, v.y * x }; }
+            s7::resolve<v2, double, v2>(&operator*),
+            s7::resolve<v2, v2, double>(&operator*)
         ) 
     );
     scheme.define_property("v2-x", "(v2-x v2) accesses x", [](const v2 &v) { return v.x; }, [](v2 &v, double x) { v.x = x; });

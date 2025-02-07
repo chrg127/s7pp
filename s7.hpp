@@ -431,6 +431,10 @@ struct Constructors {
     explicit Constructors(std::string_view name, Fns&&... fns) : name(name), overload(std::forward<Fns>(fns)...) {}
 };
 
+template             <typename R, typename... Args> inline constexpr auto resolve(R (*f)(Args...))          { return f; }
+template <typename C, typename R, typename... Args> inline constexpr auto resolve(R (C::*f)(Args...))       { return f; }
+template <typename C, typename R, typename... Args> inline constexpr auto resolve(R (C::*f)(Args...) const) { return f; }
+
 struct Variable;
 
 class Scheme {
