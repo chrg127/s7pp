@@ -98,7 +98,7 @@ struct Set {
     std::unordered_set<s7_pointer, s7::Hash, s7::Equal> set;
 
     explicit Set(s7::Scheme &scheme)
-        : set(512, s7::Hash(scheme.ptr()), s7::Equal(scheme.ptr()))
+        : set(512, s7::Hash(scheme), s7::Equal(scheme))
     {}
 
     Set(const Set &) = delete;
