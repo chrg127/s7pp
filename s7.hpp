@@ -435,9 +435,10 @@ struct Constructors {
     explicit Constructors(std::string_view name, Fns&&... fns) : name(name), overload(std::forward<Fns>(fns)...) {}
 };
 
-template             <typename R, typename... Args> inline constexpr auto resolve(R (*f)(Args...))          { return f; }
-template <typename C, typename R, typename... Args> inline constexpr auto resolve(R (C::*f)(Args...))       { return f; }
-template <typename C, typename R, typename... Args> inline constexpr auto resolve(R (C::*f)(Args...) const) { return f; }
+// implementation taken from https://github.com/ThePhD/sol2/blob/develop/include/sol/resolve.hpp
+// and kept intentionally simple (you shouldn't need to use these except for cases like operators)
+template <typename Sig>             inline constexpr Sig    *resolve(Sig    *f) { return f; }
+template <typename Sig, typename C> inline constexpr Sig C::*resolve(Sig C::*f) { return f; }
 
 struct Variable;
 

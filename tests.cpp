@@ -179,12 +179,11 @@ void test_v2()
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
         s7::Op::ToString, [](const v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
-        // s7::Op::ToString, [](const s7_int &v) -> std::string { return std::format("{}", v); },
         s7::MethodOp::Add, &v2::operator+=,
         s7::MethodOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
         s7::MethodOp::Mul, s7::Overload(
-            s7::resolve<v2, double, v2>(&operator*),
-            s7::resolve<v2, v2, double>(&operator*)
+            s7::resolve<v2(double, v2)>(&operator*),
+            s7::resolve<v2(v2, double)>(&operator*)
         ) 
     );
     scheme.define_property("v2-x", "(v2-x v2) accesses x", [](const v2 &v) { return v.x; }, [](v2 &v, double x) { v.x = x; });
