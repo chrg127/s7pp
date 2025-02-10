@@ -124,7 +124,7 @@ struct Set {
 
     s7_pointer add(s7_pointer p) { this->set.insert(p); return p; }
 
-    s7_int the_size() const { return 42; }
+    std::size_t the_size() const { return 42; }
 };
 
 template <typename T>
@@ -156,10 +156,10 @@ void test_set()
 struct v2 {
     double x, y;
 
-    const double &operator[](s7_int i) const { return i == 0 ? x : y; }
+    const double &operator[](size_t i) const { return i == 0 ? x : y; }
 
     // maybe it shouldn't define set! if this isn't provided...
-    double &operator[](s7_int i) { return i == 0 ? x : y; }
+    double &operator[](size_t i) { return i == 0 ? x : y; }
 
     v2 operator+=(const v2 &v) const
     {
@@ -194,7 +194,7 @@ void test_v2()
 void test_star_fns()
 {
     s7::Scheme scheme;
-    scheme.define_star_function("add", "a (b 1)", "doc", [](s7_int a, s7_int b) {
+    scheme.define_star_function("add", "a (b 1)", "doc", [](int a, int b) {
         return a + b;
     });
     scheme.repl();
@@ -211,8 +211,8 @@ void test_from()
 void test_varargs()
 {
     s7::Scheme scheme;
-    scheme.define_varargs_function("add", "doc", [](s7::VarArgs<s7_int> args) -> s7_int {
-        s7_int sum = 0;
+    scheme.define_varargs_function("add", "doc", [](s7::VarArgs<int> args) -> int {
+        int sum = 0;
         for (auto it = args.begin(); it != args.end(); ++it) {
             auto arg = *it;
             sum += arg;
@@ -229,8 +229,8 @@ int main()
     // test_conversion();
     // test_define_function();
     // test_set();
-    test_v2();
-    // test_star_fns();
+    // test_v2();
+    test_star_fns();
     // test_varargs();
 }
 

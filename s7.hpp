@@ -157,10 +157,10 @@ Type scheme_type()
     else if constexpr(std::is_same_v<T, std::span<uint8_t>>)    { return Type::ByteVector;  }
     else if constexpr(std::is_pointer_v<T>)                     { return Type::CPointer;    }
     else if constexpr(std::is_same_v<T, List>)                  { return Type::List;        }
+    // allowed in to(), but with truncation
+    else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) { return Type::Integer; }
+    else if constexpr(std::is_same_v<T, float>)                                                      { return Type::Real; }
     // types that should only be in function return
-    else if constexpr(Output &&
-                     (std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>))   { return Type::Integer; }
-    else if constexpr(Output && std::is_same_v<T, float>)                                               { return Type::Real; }
     else if constexpr(Output &&
                      (std::is_same_v<T, std::vector<s7_int>>
                    || std::is_same_v<T, std::span<int>>    || std::is_same_v<T, std::vector<int>>
@@ -273,6 +273,8 @@ namespace detail {
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>)    { return s7_is_byte_vector(p);  }
         else if constexpr(std::is_pointer_v<T>)                     { return s7_is_c_pointer(p);    }
         else if constexpr(std::is_same_v<T, List>)                  { return s7_is_pair(p);         }
+        else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_is_integer(p); }
+        else if constexpr(std::is_same_v<T, float>) { return s7_is_real(p); }
         return s7_is_c_object(p) && s7_c_object_type(p) == detail::get_type_tag<T>(sc);
     }
 
@@ -295,6 +297,14 @@ namespace detail {
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>)    { return std::span(s7_byte_vector_elements(p), s7_vector_length(p));        }
         else if constexpr(std::is_pointer_v<T>)                     { return reinterpret_cast<T>(s7_c_pointer(p));                              }
         else if constexpr(std::is_same_v<T, List>)                  { return List(p);                                                           }
+        else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) {
+            WARN_PRINT("truncanting s7_int (%lld bytes) to %lld bytes\n", sizeof(s7_int), sizeof(T));
+            return static_cast<T>(s7_integer(p));
+        }
+        else if constexpr(std::is_same_v<T, float>) {
+            WARN_PRINT("converting double to float\n");
+            return static_cast<T>(s7_real(p));
+        }
         else                                                        { return *reinterpret_cast<std::remove_cvref_t<T> *>(s7_c_object_value(p)); }
     }
 
