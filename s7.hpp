@@ -320,13 +320,17 @@ public:
 
     T car() const
     {
-        auto r = s7_car(p);
-        if (!detail::is<T>(sc, r)) {
-            // this is actually fine, since s7_wrong_type_arg_error is a
-            // noreturn function (despite not marked as such)
-            return detail::to<T>(sc, s7_wrong_type_arg_error(sc, caller, arg_n, r, detail::type_to_string<T>(sc).data()));
+        if constexpr(std::is_same_v<T, s7_pointer>) {
+            return s7_car(p);
+        } else {
+            auto r = s7_car(p);
+            if (!detail::is<T>(sc, r)) {
+                // this is actually fine, since s7_wrong_type_arg_error is a
+                // noreturn function (despite not marked as such)
+                return detail::to<T>(sc, s7_wrong_type_arg_error(sc, caller, arg_n, r, detail::type_to_string<T>(sc).data()));
+            }
+            return detail::to<T>(sc, s7_car(p));
         }
-        return detail::to<T>(sc, s7_car(p));
     }
 
     VarArgs cdr() const    { return VarArgs(sc, s7_cdr(p), caller, arg_n+1); }

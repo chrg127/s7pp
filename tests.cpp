@@ -168,7 +168,7 @@ struct v2 {
     }
 };
 
-// v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
+v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
 v2 operator*(v2 v, double x) { return v2 { v.x * x, v.y * x }; }
 
 void test_v2()
