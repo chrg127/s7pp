@@ -17,8 +17,15 @@
 #include <array>
 #include "function_traits.hpp"
 #include "s7/s7.h"
+#include "s7/s7-config.h"
 
 #define FWD(x) std::forward<decltype(x)>(x)
+
+#ifdef WITH_WARNINGS
+    #define WARN_PRINT(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+    #define WARN_PRINT(...)
+#endif
 
 namespace s7 {
 
@@ -211,7 +218,9 @@ namespace detail {
     {
         auto &m = TypeTag<std::remove_cvref_t<T>>::tag;
         auto it = m.find(reinterpret_cast<uintptr_t>(sc));
+#ifdef S7_DEBUGGING
         assert(it != m.end() && "missing tag for T");
+#endif
         return it->second;
     }
 
@@ -270,7 +279,9 @@ namespace detail {
     template <typename T>
     T to(s7_scheme *sc, s7_pointer p)
     {
+#ifdef S7_DEBUGGING
         assert(is<T>(sc, p) && "p isn't an object of type T");
+#endif
              if constexpr(std::is_same_v<T, s7_pointer>)            { return p;                                                                 }
         else if constexpr(std::is_same_v<T, bool>)                  { return s7_boolean(sc, p);                                                 }
         else if constexpr(std::is_same_v<T, s7_int>)                { return s7_integer(p);                                                     }
@@ -324,12 +335,14 @@ public:
             return s7_car(p);
         } else {
             auto r = s7_car(p);
+#ifdef S7_DEBUGGING
             if (!detail::is<T>(sc, r)) {
                 // this is actually fine, since s7_wrong_type_arg_error is a
                 // noreturn function (despite not marked as such)
                 return detail::to<T>(sc, s7_wrong_type_arg_error(sc, caller, arg_n, r, detail::type_to_string<T>(sc).data()));
             }
-            return detail::to<T>(sc, s7_car(p));
+#endif
+            return detail::to<T>(sc, r);
         }
     }
 
@@ -457,6 +470,7 @@ class Scheme {
             arr[i] = arglist.advance();
         }
 
+#ifdef S7_DEBUGGING
         auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             return std::array<bool, NumArgs> { is<Args>(arr[Is])...  };
         }(std::make_index_sequence<NumArgs>());
@@ -472,6 +486,7 @@ class Scheme {
                 .find(reinterpret_cast<uintptr_t>(sc))->second;
             return s7_wrong_type_arg_error(sc, name, i+1, arglist[i], types[i]);
         }
+#endif
 
         auto &fn = detail::LambdaTable<L>::lambda;
         if constexpr(std::is_same_v<R, void>) {
@@ -678,6 +693,74 @@ class Scheme {
             return res;
         };
     }
+
+    template <typename T, typename F>
+    void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
+        requires (std::is_same_v<T,          std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
+               || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>)
+    {
+        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
+                      : op == Op::Equivalent ? s7_c_type_set_is_equivalent
+                      : op == Op::Copy     ? s7_c_type_set_copy
+                      : op == Op::Fill     ? s7_c_type_set_fill
+                      : op == Op::Reverse  ? s7_c_type_set_reverse
+                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
+                      : op == Op::GcFree   ? s7_c_type_set_gc_free
+                      : op == Op::Length   ? s7_c_type_set_length
+                      : op == Op::ToString ? s7_c_type_set_to_string
+                      : op == Op::ToList   ? s7_c_type_set_to_list
+                      : op == Op::Ref      ? s7_c_type_set_ref
+                      : op == Op::Set      ? s7_c_type_set_set
+                      : nullptr;
+        auto func_name = std::format("{}-op", name);
+        auto _name = s7_string(save_string(func_name));
+        s7_function f;
+        if constexpr(FunctionTraits<F>::arity == 1) {
+            if (op == Op::GcMark) {
+                auto fn2 = detail::as_lambda(fn);
+                f = make_s7_function(_name, [fn2](s7_pointer obj) -> s7_pointer {
+                    auto obj_let = s7_c_object_let(obj);
+                    s7_mark(obj_let);
+                    fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
+                    return nullptr;
+                });
+            } else {
+                f = make_s7_function(_name, fn);
+            }
+        } else {
+            f = make_s7_function(_name, fn);
+        }
+        set_func(sc, tag, f);
+    }
+
+    template <typename T, typename F>
+    void usertype_add_method_op(std::string_view name, s7_pointer let, MethodOp op, F &&fn)
+        //requires (FunctionTraits<F>::arity == 2)
+    {
+        auto opname = op == MethodOp::Add ? "+"
+                    : op == MethodOp::Sub ? "-"
+                    : op == MethodOp::Mul ? "*"
+                    : op == MethodOp::Div ? "/"
+                    : "";
+        auto doc    = op == MethodOp::Add ? "(+ ...) adds its arguments"
+                    : op == MethodOp::Sub ? "(- ...) subtracts its trailing arguments from the first, or negates the first if only one it is given"
+                    : op == MethodOp::Mul ? "(* ...) multiplies its arguments"
+                    : op == MethodOp::Div ? "(/ x1 ...) divides its first argument by the rest, or inverts the first if there is only one argument"
+                    : "";
+        // put fn as a method
+        auto _name = std::format("{} ({} method)", opname, name);
+        auto add_method = make_function(_name, "custom method for usertype", std::move(fn));
+        s7_define(sc, let, s7_make_symbol(sc, opname), add_method);
+        // substitute op
+        if (!substitured_ops.contains(op)) {
+                 if (op == MethodOp::Add) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Add>()); }
+            else if (op == MethodOp::Sub) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Sub>()); }
+            else if (op == MethodOp::Mul) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Mul>()); }
+            else if (op == MethodOp::Div) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Div>()); }
+            substitured_ops.insert(op);
+        }
+    }
+
 
 public:
     Scheme() : sc(s7_init()) {}
@@ -1154,88 +1237,6 @@ public:
     }
 
     /* usertypes */
-
-private:
-    template <typename T, typename F>
-    void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
-        requires (std::is_same_v<T,          std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
-               || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>)
-    {
-        auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
-                      : op == Op::Equivalent ? s7_c_type_set_is_equivalent
-                      : op == Op::Copy     ? s7_c_type_set_copy
-                      : op == Op::Fill     ? s7_c_type_set_fill
-                      : op == Op::Reverse  ? s7_c_type_set_reverse
-                      : op == Op::GcMark   ? s7_c_type_set_gc_mark
-                      : op == Op::GcFree   ? s7_c_type_set_gc_free
-                      : op == Op::Length   ? s7_c_type_set_length
-                      : op == Op::ToString ? s7_c_type_set_to_string
-                      : op == Op::ToList   ? s7_c_type_set_to_list
-                      : op == Op::Ref      ? s7_c_type_set_ref
-                      : op == Op::Set      ? s7_c_type_set_set
-                      : nullptr;
-        auto func_name = std::format("{}-op", name);
-        auto _name = s7_string(save_string(func_name));
-        s7_function f;
-        if constexpr(FunctionTraits<F>::arity == 1) {
-            if (op == Op::GcMark) {
-                auto fn2 = detail::as_lambda(fn);
-                f = make_s7_function(_name, [fn2](s7_pointer obj) -> s7_pointer {
-                    auto obj_let = s7_c_object_let(obj);
-                    s7_mark(obj_let);
-                    fn2(*reinterpret_cast<T *>(s7_c_object_value(obj)));
-                    return nullptr;
-                });
-            } else {
-                f = make_s7_function(_name, fn);
-            }
-        } else {
-            f = make_s7_function(_name, fn);
-        }
-        set_func(sc, tag, f);
-    }
-
-    template <typename T, typename F>
-    void usertype_add_method_op(std::string_view name, s7_pointer let, MethodOp op, F &&fn)
-        //requires (FunctionTraits<F>::arity == 2)
-    {
-        auto opname = op == MethodOp::Add ? "+"
-                    : op == MethodOp::Sub ? "-"
-                    : op == MethodOp::Mul ? "*"
-                    : op == MethodOp::Div ? "/"
-                    : "";
-        auto doc    = op == MethodOp::Add ? "(+ ...) adds its arguments"
-                    : op == MethodOp::Sub ? "(- ...) subtracts its trailing arguments from the first, or negates the first if only one it is given"
-                    : op == MethodOp::Mul ? "(* ...) multiplies its arguments"
-                    : op == MethodOp::Div ? "(/ x1 ...) divides its first argument by the rest, or inverts the first if there is only one argument"
-                    : "";
-        // put fn as a method
-        auto _name = std::format("{} ({} method)", opname, name);
-        auto add_method = make_function(_name, "custom method for usertype", std::move(fn));
-        s7_define(sc, let, s7_make_symbol(sc, opname), add_method);
-        // substitute op
-        if (!substitured_ops.contains(op)) {
-                 if (op == MethodOp::Add) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Add>()); }
-            else if (op == MethodOp::Sub) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Sub>()); }
-            else if (op == MethodOp::Mul) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Mul>()); }
-            else if (op == MethodOp::Div) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Div>()); }
-            substitured_ops.insert(op);
-        }
-    }
-
-public:
-    template <typename T, typename F>
-    void add_op(Op op, F &&fn)
-    {
-        usertype_add_op(detail::get_type_name<T>(sc), get_type_tag<T>(), op, std::move(fn));
-    }
-
-    template <typename T, typename F>
-    void add_method_op(MethodOp op, F &&fn)
-    {
-        usertype_add_method_op(detail::get_type_name<T>(sc), get_type_let<T>(), op, std::move(fn));
-    }
-
     template <typename T, typename... Fns>
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let)
     {
@@ -1303,9 +1304,11 @@ public:
                 auto *obj = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)));
                 using ArgType = typename FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
                 auto arg = s7_cadr(args);
+#ifdef S7_DEBUGGING
                 if (!scheme.is<ArgType>(arg)) {
                     return s7_wrong_type_arg_error(sc, "T ref", 1, arg, scheme.type_to_string<ArgType>().data());
                 }
+#endif
                 return scheme.from((*obj)[scheme.to<ArgType>(arg)]);
             });
 
@@ -1315,15 +1318,19 @@ public:
                 using IndexType = typename FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
                 using ValueType = std::remove_cvref_t<typename FunctionTraits<decltype(&T::operator[])>::ReturnType>;
                 auto index = s7_cadr(args);
+#ifdef S7_DEBUGGING
                 if (!scheme.is<IndexType>(index)) {
                     return s7_wrong_type_arg_error(sc, "T ref", 1, index,
                         scheme.type_to_string<IndexType>().data());
                 }
+#endif
                 auto value = s7_caddr(args);
+#ifdef S7_DEBUGGING
                 if (!scheme.is<ValueType>(value)) {
                     return s7_wrong_type_arg_error(sc, "T ref", 2, value,
                         scheme.type_to_string<ValueType>().data());
                 }
+#endif
                 (*obj)[scheme.to<IndexType>(index)] = scheme.to<ValueType>(value);
                 return s7_undefined(sc);
             });
@@ -1383,6 +1390,18 @@ public:
         auto tag = make_usertype<T>(name, constructors, let, FWD(args)...);
         usertype_add_method_op<T>(name, let, op, fn);
         return tag;
+    }
+
+    template <typename T, typename F>
+    void add_op(Op op, F &&fn)
+    {
+        usertype_add_op(detail::get_type_name<T>(sc), get_type_tag<T>(), op, std::move(fn));
+    }
+
+    template <typename T, typename F>
+    void add_method_op(MethodOp op, F &&fn)
+    {
+        usertype_add_method_op(detail::get_type_name<T>(sc), get_type_let<T>(), op, std::move(fn));
     }
 
     // also known as dilambda, but that is such a bad name (although technically right)
@@ -1450,7 +1469,9 @@ public:
     {
         auto &m = detail::TypeTag<std::remove_cvref_t<T>>::let;
         auto it = m.find(reinterpret_cast<uintptr_t>(sc));
+#ifdef S7_DEBUGGING
         assert(it != m.end() && "missing tag for T");
+#endif
         return it->second;
     }
 
