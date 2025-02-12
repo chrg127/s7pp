@@ -681,7 +681,8 @@ class Scheme {
                 if (s7_is_c_object(p)) {
                     auto method = s7_method(sc, s7_c_object_let(p), s7_make_symbol(sc, Name.data()));
                     if (method == s7_undefined(sc)) {
-                        s7_wrong_type_arg_error(sc, Name.data(), 0, p, "a c-object that defines +");
+                        auto msg = std::format("a c-object that defines {}", Name);
+                        return s7_wrong_type_arg_error(sc, Name.data(), 0, p, msg.c_str());
                     }
                     return call(method, p);
                 } else {
@@ -753,17 +754,13 @@ class Scheme {
                     : op == MethodOp::Mul ? "*"
                     : op == MethodOp::Div ? "/"
                     : "";
-        auto doc    = op == MethodOp::Add ? "(+ ...) adds its arguments"
-                    : op == MethodOp::Sub ? "(- ...) subtracts its trailing arguments from the first, or negates the first if only one it is given"
-                    : op == MethodOp::Mul ? "(* ...) multiplies its arguments"
-                    : op == MethodOp::Div ? "(/ x1 ...) divides its first argument by the rest, or inverts the first if there is only one argument"
-                    : "";
         // put fn as a method
         auto _name = std::format("{} ({} method)", opname, name);
         auto add_method = make_function(_name, "custom method for usertype", std::move(fn));
         s7_define(sc, let, s7_make_symbol(sc, opname), add_method);
         // substitute op
         if (!substitured_ops.contains(op)) {
+            auto doc = s7_documentation(sc, s7_name_to_value(sc, opname));
                  if (op == MethodOp::Add) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Add>()); }
             else if (op == MethodOp::Sub) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Sub>()); }
             else if (op == MethodOp::Mul) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Mul>()); }
@@ -771,7 +768,6 @@ class Scheme {
             substitured_ops.insert(op);
         }
     }
-
 
 public:
     Scheme() : sc(s7_init()) {}
@@ -1053,6 +1049,12 @@ public:
     }
 
     Variable operator[](std::string_view name);
+
+    template <typename T> T get(std::string_view name)        { return to<T>(s7_name_to_value(sc, name.data())); }
+    template <typename T> auto get_opt(std::string_view name) { return to_opt<T>(s7_name_to_value(sc, name.data())); }
+
+    template <typename T> void set(std::string_view name, const T &value)  { s7_symbol_set_value(sc, sym(name.data()), from(value)); }
+    template <typename T> void set(std::string_view name,       T &&value) { s7_symbol_set_value(sc, sym(name.data()), from(std::move(value))); }
 
     s7_pointer sym(std::string_view name) { return s7_make_symbol(sc, name.data()); }
 

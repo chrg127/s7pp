@@ -145,9 +145,26 @@ void example_add_extension()
     scheme.repl();
 }
 
-// s7_method not supported yet
-
-
+// s7_method version
+void example_add_extension_method()
+{
+    s7::Scheme scheme;
+    scheme.define_function("our-abs", "abs replacement", [&](s7::VarArgs<s7_pointer> args) {
+        auto x = args[0];
+        if (!scheme.is<s7_int>(x) && !scheme.is<double>(x)) {
+            auto method = s7_method(scheme.ptr(), x, scheme.sym("abs"));
+            if (method == scheme.undefined()) {
+                return scheme.error(s7::errors::WrongType {
+                    .arg = x, .arg_n = 1, .type = "a real", .caller = "abs"
+                });
+            }
+            return scheme.apply(method, args);
+        } else {
+            return scheme.from(fabs(scheme.to<double>(x)));
+        }
+    });
+    scheme.repl();
+}
 
 // C-side define* (s7_define_function_star)
 void example_star_function()
@@ -172,15 +189,15 @@ void example_macro()
 // s7_method not supported yet
 
 // Signal handling and continuations
-// This one's pretty shit, admittedly...
-/*
+
+#ifdef __linux__
 struct sigaction new_act, old_act;
 s7::Scheme *global_scheme;
 
 void handle_sigint(int ignored)
 {
     printf("interrupted!\n");
-    (*global_scheme)["*interrupt*"] = s7_make_continuation(global_scheme->ptr());
+    global_scheme->set("*interrupt*", global_scheme->make_continuation());
     sigaction(SIGINT, &new_act, nullptr);
     s7_quit(global_scheme->ptr());
 }
@@ -203,7 +220,7 @@ void example_signals_continuations()
 
     scheme.repl();
 }
-*/
+#endif
 
 // Notification from Scheme that a given Scheme variable has been set
 void example_notification()
@@ -250,10 +267,13 @@ int main()
     // example_c_function_variable();
     // example_call_get_set_vars();
     // example_cpp_repl();
-    example_listener_dax();
+    // example_listener_dax();
     // example_ports_redirect();
+    // example_add_extension();
+    // example_add_extension_method();
     // example_star_function();
     // example_macro();
+    // example_signals_continuations();
     // example_notification();
     // example_hooks();
 }
