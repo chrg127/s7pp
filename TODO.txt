@@ -1,7 +1,3 @@
-have to do:
-- add function support inside Variable
-- add defines for debug/release
-
 partially completed, not sure if actually completed:
 - more checks when defining ops on usertypes
 

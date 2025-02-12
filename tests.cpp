@@ -4,6 +4,8 @@
 #include "s7.hpp"
 #include "s7/s7.h"
 
+auto add2(int x) -> int { return x + 2; };
+
 void test_scheme_defined_function()
 {
     s7::Scheme scheme;
@@ -26,6 +28,10 @@ void test_scheme_defined_function()
         return scheme.undefined();
     };
     scheme.define_function("test-sym", "test symbols", s7_function(fn));
+
+    scheme["testfn"] = &add2;
+    scheme["testfn2"] = [&]() { return res; };
+    scheme["testfn3"] = add2;
 
     scheme.repl();
 }
@@ -88,10 +94,16 @@ int64_t find(std::span<s7_int> vec, int64_t obj)
 void test_define_function()
 {
     s7::Scheme scheme;
+    printf("add-double()\n");
     scheme.define_function("add-double", "doc", add_double);
+    printf("add-int()\n");
     scheme.define_function("add-int", "doc", add_int);
+    printf("orint_append()\n");
     scheme.define_function("print-append", "doc", print_append);
+    printf("find_index()\n");
     scheme.define_function("find-index", "doc", find);
+    printf("repl()\n");
+    scheme.repl();
 }
 
 struct Set {
@@ -224,13 +236,13 @@ void test_varargs()
 
 int main()
 {
-    // test_scheme_defined_function();
+    test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
     // test_set();
     // test_v2();
-    test_star_fns();
+    // test_star_fns();
     // test_varargs();
 }
 
