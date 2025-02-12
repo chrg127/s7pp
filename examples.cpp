@@ -149,8 +149,7 @@ void example_add_extension()
 void example_add_extension_method()
 {
     s7::Scheme scheme;
-    scheme.define_function("our-abs", "abs replacement", [&](s7::VarArgs<s7_pointer> args) {
-        auto x = args[0];
+    scheme.define_function("our-abs", "abs replacement", [&](s7_pointer x) {
         if (!scheme.is<s7_int>(x) && !scheme.is<double>(x)) {
             auto method = s7_method(scheme.ptr(), x, scheme.sym("abs"));
             if (method == scheme.undefined()) {
@@ -158,7 +157,7 @@ void example_add_extension_method()
                     .arg = x, .arg_n = 1, .type = "a real", .caller = "abs"
                 });
             }
-            return scheme.apply(method, args);
+            return scheme.call(method, x);
         } else {
             return scheme.from(fabs(scheme.to<double>(x)));
         }
@@ -186,10 +185,26 @@ void example_macro()
 }
 
 // define a generic function in C
-// s7_method not supported yet
+void example_generic_function()
+{
+    s7::Scheme scheme;
+    scheme.define_varargs_function("plus",
+        "(plus obj ...) applies obj's plus method to obj and any trailing arguments.",
+        [&](s7::VarArgs<s7_pointer> args) {
+            auto obj = args[0];
+            auto method = s7_method(scheme.ptr(), obj, scheme.sym("plus"));
+            if (s7_is_procedure(method)) {
+                return scheme.apply(method, args);
+            } else {
+                return scheme.from(false);
+            }
+        }
+    );
+    scheme.repl();
+}
+
 
 // Signal handling and continuations
-
 #ifdef __linux__
 struct sigaction new_act, old_act;
 s7::Scheme *global_scheme;
@@ -237,6 +252,36 @@ void example_notification()
 }
 
 // Load C defined stuff into a separate namespace
+void example_namespace(int argc, char *argv[])
+{
+    s7::Scheme scheme;
+    /*
+     * "func1" and "var1" will be placed in an anonymous environment,
+     * accessible from Scheme via the global variable "lib-exports"
+     */
+    auto new_env = s7_sublet(scheme.ptr(), s7_curlet(scheme.ptr()), scheme.nil());
+    /* make a private environment for func1 and var1 below (this is our "namespace") */
+    scheme.protect(new_env);
+    s7_define(scheme.ptr(), new_env, scheme.sym("func1"),
+        scheme.make_function("func1", "func1 adds 1 to its argument", [](s7_int x) {
+            return x + 1;
+        })
+    );
+    s7_define(scheme.ptr(), new_env, scheme.sym("var1"), scheme.from(32));
+    /* those two symbols are now defined in the new environment */
+
+    /* add "lib-exports" to the global environment */
+    scheme.define("lib-exports", s7_let_to_list(scheme.ptr(), new_env));
+
+    if (argc == 2) {
+        fprintf(stderr, "load %s\n", argv[1]);
+        if (!s7_load(scheme.ptr(), argv[1])) {
+            fprintf(stderr, "can't find %s\n", argv[1]);
+        }
+    } else {
+        scheme.repl();
+    }
+}
 
 // Handle scheme errors in C
 
@@ -261,7 +306,7 @@ void example_hooks()
 // Bignums in C
 // bignums not supported
 
-int main()
+int main(int argc, char *argv[])
 {
     // example_repl();
     // example_c_function_variable();
@@ -273,8 +318,10 @@ int main()
     // example_add_extension_method();
     // example_star_function();
     // example_macro();
+    // example_generic_function();
     // example_signals_continuations();
     // example_notification();
+    example_namespace(argc, argv);
     // example_hooks();
 }
 
