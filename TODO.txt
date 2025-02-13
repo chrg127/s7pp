@@ -1,11 +1,15 @@
+possibly:
+- a Procedure or Function type
+- simple let handling
+
 partially completed, not sure if actually completed:
 - more checks when defining ops on usertypes
 
 probably won't do soon:
 - (possibly) ports
-- (possibly) let handling
 - (possibly) more error stuff
 - hook stuff seems cool but is a feature not attached to anything else?
 - define function with signatures like (int, float, varargs)
 - signature for overloads
 - multidimensional vectors
+- bignums

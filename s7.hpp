@@ -817,8 +817,9 @@ public:
     }
 
     /* gc stuff */
-    void protect(s7_pointer p) { s7_gc_protect(sc, p); }
-    void mark(s7_pointer p)    { s7_mark(p); }
+    s7_int protect(s7_pointer p)  { return s7_gc_protect(sc, p); }
+    void unprotect_at(s7_int loc) { s7_gc_unprotect_at(sc, loc); }
+    void mark(s7_pointer p)       { s7_mark(p); }
 
     /* constants */
     s7_pointer nil()         { return s7_nil(sc); }
@@ -1135,14 +1136,18 @@ public:
     template <typename F>
     s7_pointer define_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
     {
-        constexpr auto NumArgs = FunctionTraits<F>::arity;
         auto _name = s7_string(save_string(name));
         auto f = make_s7_function(_name, func);
         auto define = opts.unsafe_body && opts.unsafe_arglist ? s7_define_unsafe_typed_function
                     : opts.unsafe_body                        ? s7_define_semisafe_typed_function
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
-        return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
+        // if constexpr(std::is_same_v<typename, FunctionTraits<F>::Argument<0>::Type {
+        //  return define(sc, _name, f, 0, 0, true, 
+        // } else {
+            constexpr auto NumArgs = FunctionTraits<F>::arity;
+            return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
+        // }
     }
 
     template <typename... Fns>

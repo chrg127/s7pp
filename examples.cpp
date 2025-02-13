@@ -112,22 +112,20 @@ void example_listener_dax()
 // (currently this example can't be fully done due to missing support for ports
 // that said, this example does at least show how to mix c api function with the
 // c++ class)
-s7_pointer my_read(s7_scheme *sc, s7_read_t /*peek*/, s7_pointer /*port*/)
-{
-    auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
-    return scheme.from<char>((char) fgetc(stdin));
-}
-
-void my_print(s7_scheme *, uint8_t c, s7_pointer /*port*/)
-{
-    fprintf(stderr, "[%c] ", c);
-}
-
 void example_ports_redirect()
 {
     s7::Scheme scheme;
-    s7_set_current_output_port(scheme.ptr(), s7_open_output_function(scheme.ptr(), my_print));
-    scheme["io-port"] = s7_open_input_function(scheme.ptr(), my_read);
+    s7_set_current_output_port(scheme.ptr(),
+        s7_open_output_function(scheme.ptr(), [](s7_scheme *, uint8_t c, s7_pointer /* port */) {
+            fprintf(stderr, "[%c] ", c);
+        })
+    );
+    scheme["io-port"] = s7_open_input_function(scheme.ptr(),
+        [](s7_scheme *sc, s7_read_t /*peek*/, s7_pointer /*port*/) -> s7_pointer {
+            auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
+            return scheme.from((char) fgetc(stdin));
+        }
+    );
     scheme.repl();
 }
 
@@ -206,6 +204,9 @@ void example_generic_function()
 
 // Signal handling and continuations
 #ifdef __linux__
+
+#include <signal.h>
+
 struct sigaction new_act, old_act;
 s7::Scheme *global_scheme;
 
@@ -238,16 +239,19 @@ void example_signals_continuations()
 #endif
 
 // Notification from Scheme that a given Scheme variable has been set
+// (slightly modified to make use of make_function
 void example_notification()
 {
     s7::Scheme scheme;
-    scheme.define_function("notify-C", "called if notified-var is set!",
+    auto f = scheme.make_function("notify-C", "called if notified-var is set!",
         [&](s7_pointer a, s7_pointer b) -> s7_pointer {
             printf("%s is set to %s\n", scheme.to_string(a).data(), scheme.to_string(b).data());
             return b;
         });
+    // i am not sure if 'f' must be protected in this case
+    // scheme.protect(f);
     scheme["notified-var"] = 0;
-    s7_set_setter(scheme.ptr(), scheme.sym("notified-var"), scheme["notify-C"].as<s7_pointer>());
+    s7_set_setter(scheme.ptr(), scheme.sym("notified-var"), f);
     scheme.repl();
 }
 
@@ -284,6 +288,57 @@ void example_namespace(int argc, char *argv[])
 }
 
 // Handle scheme errors in C
+void example_handle_errors()
+{
+    s7::Scheme scheme;
+    bool with_error_hook = true;
+    scheme.define_function("error-handler", "out error handler", [](std::string_view error) -> bool {
+        printf("error: %s\n", error.data());
+        return false;
+    });
+    if (with_error_hook) {
+        scheme.eval(R"(
+            (set! (hook-functions *error-hook*)
+              (list (lambda (hook)
+                      (error-handler
+                        (apply format #f (hook 'data)))
+                      (set! (hook 'result) 'our-error)))))");
+    }
+
+    for (;;) {
+        printf("> ");
+        char buffer[512];
+        fgets(buffer, 512, stdin);
+        if (buffer[0] != '\n' || strlen(buffer) > 1) {
+            /* trap error messages */
+            auto old_port = s7_set_current_error_port(scheme.ptr(), s7_open_output_string(scheme.ptr()));
+            s7_int gc_loc = -1;
+            if (old_port != scheme.nil()) {
+                gc_loc = scheme.protect(old_port);
+            }
+
+            /* eval input */
+            auto result = scheme.eval(buffer);
+
+            /* print out the value wrapped in "{}" so we can tell it from other IO paths */
+            printf("{%s}", scheme.to_string(result).data());
+
+            /* look for error messages */
+            auto errmsg = s7_get_output_string(scheme.ptr(), s7_current_error_port(scheme.ptr()));
+
+            /* if we got something, wrap it in "[]" */
+            if (errmsg && *errmsg) {
+                printf("[%s]", errmsg);
+            }
+
+            s7_close_output_port(scheme.ptr(), s7_current_error_port(scheme.ptr()));
+            if (gc_loc != -1) {
+                scheme.unprotect_at(gc_loc);
+            }
+        }
+        printf("\n");
+    }
+}
 
 // C and Scheme hooks
 void example_hooks()
@@ -302,9 +357,54 @@ void example_hooks()
 }
 
 // Load a shared library
+#ifdef __linux__
+
+#include <dlfcn.h>
+
+static void *library = nullptr;
+
+void example_load_library()
+{
+    s7::Scheme scheme;
+    scheme.define_function("cload", "(cload so-file-name) loads the module",
+        [&](std::string_view name, std::string_view init_name) -> s7_pointer {
+            library = dlopen(name.data(), RTLD_LAZY);
+            if (library) {
+                void *init_func = dlsym(library, init_name.data());
+                if (init_func) {
+                    /* call initialization function */
+                    using dl_func = void (*)(Scheme *);
+                    ((dl_func) init_func)(&scheme);
+                }
+            }
+            scheme.error(s7::errors::Error {
+                .type = "load-error",
+                .info = scheme.list("loader error: ~S", dlerror())
+            });
+        }
+    );
+
+    scheme.define_function("try", "(try name num) tries to call name in the shared library with the argument num,",
+        [&](std::string_view name, double num) -> s7_pointer {
+            void *func = dlsym(library, name.data());
+            if (func) {
+                /* we'll assume double f(double) */
+                using dl_func = double (*)(double);
+                return scheme.from(dl_func(num));
+            }
+            return scheme.error({
+                .type = "can't find function",
+                .info = scheme.list("loader error: ~S", dlerror())
+            });
+        }
+    );
+
+    scheme.repl();
+}
+#endif
 
 // Bignums in C
-// bignums not supported
+// (bignums not supported)
 
 int main(int argc, char *argv[])
 {
@@ -321,7 +421,9 @@ int main(int argc, char *argv[])
     // example_generic_function();
     // example_signals_continuations();
     // example_notification();
-    example_namespace(argc, argv);
+    // example_namespace(argc, argv);
+    example_handle_errors();
     // example_hooks();
+    // example_load_library
 }
 
