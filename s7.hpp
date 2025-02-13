@@ -33,7 +33,7 @@ class List {
     s7_pointer p;
 
 public:
-    explicit List(s7_pointer p) : p{p} {}
+    explicit List(s7_pointer p) : p(p) {}
 
     s7_pointer operator[](std::size_t i) const
     {
@@ -331,15 +331,6 @@ public:
     VarArgs(s7_scheme *sc, s7_pointer p, const char *caller, s7_int arg_n)
         : sc(sc), p(p), caller(caller), arg_n(arg_n) {}
 
-    s7_pointer operator[](std::size_t i) const
-    {
-        s7_pointer x = p;
-        while (i-- > 0) {
-            x = s7_cdr(x);
-        }
-        return s7_car(x);
-    }
-
     T car() const
     {
         if constexpr(std::is_same_v<T, s7_pointer>) {
@@ -357,18 +348,12 @@ public:
         }
     }
 
+    s7_pointer operator[](std::size_t i) const { return s7_list_ref(sc, p, i); }
+    std::size_t size() const { return s7_list_length(sc, p); }
     VarArgs cdr() const    { return VarArgs(sc, s7_cdr(p), caller, arg_n+1); }
     s7_pointer ptr() const { return p; }
     bool at_end()          { return !s7_is_pair(p); }
     T advance()            { auto tmp = car(); p = s7_cdr(p); return tmp; }
-
-    std::size_t size() const
-    {
-        size_t s = 0;
-        for (auto x = p; s7_is_pair(x); x = s7_cdr(x), s++)
-            ;
-        return s;
-    }
 
     struct iterator {
         using value_type = T;
