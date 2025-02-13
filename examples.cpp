@@ -210,7 +210,7 @@ void example_generic_function()
 struct sigaction new_act, old_act;
 s7::Scheme *global_scheme;
 
-void handle_sigint(int ignored)
+void handle_sigint(int)
 {
     printf("interrupted!\n");
     global_scheme->set("*interrupt*", global_scheme->make_continuation());
@@ -221,14 +221,14 @@ void handle_sigint(int ignored)
 void example_signals_continuations()
 {
     s7::Scheme scheme;
-    *global_scheme = &scheme;
+    global_scheme = &scheme;
 
     scheme.define_function("sleep", "(sleep) sleeps", []() -> bool { sleep(1); return false; });
     // Scheme variable *interrupt* holds the continuation at the point of the interrupt
     scheme["*interrupt*"] = false;
 
     sigaction(SIGINT, nullptr, &old_act);
-    if (old_add.sa_handler != SIG_IGN) {
+    if (old_act.sa_handler != SIG_IGN) {
         std::memset(&new_act, 0, sizeof(new_act));
         new_act.sa_handler = &handle_sigint;
         sigaction(SIGINT, &new_act, nullptr);
@@ -373,11 +373,12 @@ void example_load_library()
                 void *init_func = dlsym(library, init_name.data());
                 if (init_func) {
                     /* call initialization function */
-                    using dl_func = void (*)(Scheme *);
+                    using dl_func = void (*)(s7::Scheme *);
                     ((dl_func) init_func)(&scheme);
+                    return scheme.from(true);
                 }
             }
-            scheme.error(s7::errors::Error {
+            return scheme.error(s7::errors::Error {
                 .type = "load-error",
                 .info = scheme.list("loader error: ~S", dlerror())
             });
@@ -390,9 +391,9 @@ void example_load_library()
             if (func) {
                 /* we'll assume double f(double) */
                 using dl_func = double (*)(double);
-                return scheme.from(dl_func(num));
+                return scheme.from(((dl_func)func)(num));
             }
-            return scheme.error({
+            return scheme.error(s7::errors::Error {
                 .type = "can't find function",
                 .info = scheme.list("loader error: ~S", dlerror())
             });

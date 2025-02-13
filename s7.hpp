@@ -288,7 +288,7 @@ namespace detail {
         else if constexpr(std::is_same_v<T, List>)                  { return List(p);                                                           }
         else if constexpr(std::is_same_v<T, Function>)              { return Function(p);                                                       }
         else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) {
-            WARN_PRINT(";truncanting s7_int (%lld bytes) to %lld bytes\n", sizeof(s7_int), sizeof(T));
+            WARN_PRINT(";truncanting s7_int (%zu bytes) to %zu bytes\n", sizeof(s7_int), sizeof(T));
             return static_cast<T>(s7_integer(p));
         }
         else if constexpr(std::is_same_v<T, float>) {
