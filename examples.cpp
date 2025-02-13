@@ -35,9 +35,9 @@ void example_call_get_set_vars()
     s7::Scheme scheme;
     scheme["an-integer"] = 1;
     scheme.eval("(define (add1 a) (+ a 1))");
-    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as<s7_int>()).c_str());
+    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].to<s7_int>()).c_str());
     scheme["an-integer"] = 32;
-    printf("%s\n", std::format("now an-integer: {}", scheme["an-integer"].as<s7_int>()).c_str());
+    printf("%s\n", std::format("now an-integer: {}", scheme["an-integer"].to<s7_int>()).c_str());
     printf("%s\n", std::format("(add1 2): {}", scheme.to<s7_int>(scheme.call("add1", 2))).c_str());
 }
 
@@ -58,7 +58,7 @@ void example_cpp_repl()
 /* define *listener-prompt* in scheme, add two accessors for C get/set */
 std::string_view listener_prompt(s7::Scheme &scheme)
 {
-    return scheme["*listener-prompt*"].as<std::string_view>();
+    return scheme["*listener-prompt*"].to<std::string_view>();
 }
 
 void set_listener_prompt(s7::Scheme &scheme, std::string_view new_prompt)
@@ -98,7 +98,7 @@ void example_listener_dax()
 
     // i can't use scheme.repl() here
     for (;;) {
-        printf("%s ", scheme["*listener-prompt*"].as<const char *>());
+        printf("%s ", scheme["*listener-prompt*"].to<const char *>());
         char buffer[512];
         fgets(buffer, sizeof(buffer), stdin);
         if (buffer[0] != '\n' || strlen(buffer) > 1) {
@@ -133,8 +133,8 @@ void example_ports_redirect()
 void example_add_extension()
 {
     s7::Scheme scheme;
-    auto old_add = scheme["+"].as<s7::Function>();
-    auto old_string_append = scheme["string-append"].as<s7::Function>();
+    auto old_add = scheme["+"].to<s7::Function>();
+    auto old_string_append = scheme["string-append"].to<s7::Function>();
     scheme.define_varargs_function("+", "(+ ...) adds or appends its arguments",
         [&scheme, old_add, old_string_append](s7::VarArgs<s7_pointer> args) {
             return scheme.apply(scheme.is<std::string>(args[0]) ? old_string_append : old_add, args);

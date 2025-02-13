@@ -11,11 +11,11 @@ void test_scheme_defined_function()
     s7::Scheme scheme;
     scheme["an-integer"] = 1;
     scheme.eval("(define (add1 a) (+ a 1))");
-    auto x = scheme["an-integer"].as_opt<int64_t>();
+    auto x = scheme["an-integer"].to_opt<int64_t>();
     printf("%s\n", std::format("{}", x.value()).c_str());
-    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as<int64_t>()).c_str());
+    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].to<int64_t>()).c_str());
     scheme["an-integer"] = 32;
-    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].as_opt<int64_t>().value()).c_str());
+    printf("%s\n", std::format("an-integer: {}", scheme["an-integer"].to_opt<int64_t>().value()).c_str());
     int64_t res = scheme.to<int64_t>(scheme.call("add1", 2));
     printf("%s\n", std::format("(add1 2): {}", res).c_str());
 

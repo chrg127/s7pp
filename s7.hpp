@@ -1539,8 +1539,8 @@ public:
         return *this;
     }
 
-    template <typename T> T as()        { return scheme->to<T>(s7_symbol_value(scheme->ptr(), sym)); }
-    template <typename T> auto as_opt() { return scheme->to_opt<T>(s7_symbol_value(scheme->ptr(), sym)); }
+    template <typename T> T to()        { return scheme->to<T>(s7_symbol_value(scheme->ptr(), sym)); }
+    template <typename T> auto to_opt() { return scheme->to_opt<T>(s7_symbol_value(scheme->ptr(), sym)); }
 };
 
 Variable Scheme::operator[](std::string_view name)
