@@ -133,8 +133,8 @@ void example_ports_redirect()
 void example_add_extension()
 {
     s7::Scheme scheme;
-    auto old_add = scheme["+"].as<s7_pointer>();
-    auto old_string_append = scheme["string-append"].as<s7_pointer>();
+    auto old_add = scheme["+"].as<s7::Function>();
+    auto old_string_append = scheme["string-append"].as<s7::Function>();
     scheme.define_varargs_function("+", "(+ ...) adds or appends its arguments",
         [&scheme, old_add, old_string_append](s7::VarArgs<s7_pointer> args) {
             return scheme.apply(scheme.is<std::string>(args[0]) ? old_string_append : old_add, args);
@@ -149,13 +149,13 @@ void example_add_extension_method()
     s7::Scheme scheme;
     scheme.define_function("our-abs", "abs replacement", [&](s7_pointer x) {
         if (!scheme.is<s7_int>(x) && !scheme.is<double>(x)) {
-            auto method = s7_method(scheme.ptr(), x, scheme.sym("abs"));
-            if (method == scheme.undefined()) {
+            auto method = scheme.find_method(x, "abs");
+            if (!method) {
                 return scheme.error(s7::errors::WrongType {
                     .arg = x, .arg_n = 1, .type = "a real", .caller = "abs"
                 });
             }
-            return scheme.call(method, x);
+            return scheme.call(method.value(), x);
         } else {
             return scheme.from(fabs(scheme.to<double>(x)));
         }
@@ -190,9 +190,9 @@ void example_generic_function()
         "(plus obj ...) applies obj's plus method to obj and any trailing arguments.",
         [&](s7::VarArgs<s7_pointer> args) {
             auto obj = args[0];
-            auto method = s7_method(scheme.ptr(), obj, scheme.sym("plus"));
-            if (s7_is_procedure(method)) {
-                return scheme.apply(method, args);
+            auto method = scheme.find_method(obj, "plus");
+            if (method) {
+                return scheme.apply(method.value(), args);
             } else {
                 return scheme.from(false);
             }
@@ -251,7 +251,7 @@ void example_notification()
     // i am not sure if 'f' must be protected in this case
     // scheme.protect(f);
     scheme["notified-var"] = 0;
-    s7_set_setter(scheme.ptr(), scheme.sym("notified-var"), f);
+    scheme.set_setter(scheme.sym("notified-var"), f);
     scheme.repl();
 }
 
@@ -269,7 +269,7 @@ void example_namespace(int argc, char *argv[])
     s7_define(scheme.ptr(), new_env, scheme.sym("func1"),
         scheme.make_function("func1", "func1 adds 1 to its argument", [](s7_int x) {
             return x + 1;
-        })
+        }).p
     );
     s7_define(scheme.ptr(), new_env, scheme.sym("var1"), scheme.from(32));
     /* those two symbols are now defined in the new environment */
