@@ -275,7 +275,7 @@ void example_namespace(int argc, char *argv[])
     /* those two symbols are now defined in the new environment */
 
     /* add "lib-exports" to the global environment */
-    scheme.define("lib-exports", s7_let_to_list(scheme.ptr(), new_env));
+    scheme.define("lib-exports", s7::Let(scheme.ptr(), new_env).to_list());
 
     if (argc == 2) {
         fprintf(stderr, "load %s\n", argv[1]);

@@ -1,5 +1,4 @@
 possibly:
-- a Procedure or Function type
 - simple let handling
 
 partially completed, not sure if actually completed:

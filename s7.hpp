@@ -96,6 +96,58 @@ struct Function {
     }
 };
 
+struct Variable;
+
+class Let {
+    s7_scheme *sc;
+    s7_pointer let;
+
+public:
+    explicit Let(s7_scheme *sc, s7_pointer let) : sc(sc), let(let) {}
+
+    /*
+    template <typename T>
+    s7_pointer define(std::string_view name, const T &value, std::string_view doc = "")
+    {
+        auto object = from(value);
+        auto sym = s7_make_symbol(name.data());
+        s7_define(sc, let, sym, object);
+        s7_set_documentation(sc, object, doc.data());
+        return sym;
+    }
+
+    template <typename T>
+    s7_pointer define(std::string_view name, T &&value, std::string_view doc = "")
+    {
+        auto object = from(std::move(value));
+        auto sym = s7_make_symbol(name.data());
+        s7_define(sc, let, sym, object);
+        s7_set_documentation(sc, object, doc.data());
+        return sym;
+    }
+
+    template <typename T>
+    s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
+    {
+        auto sym = define(name, value, doc);
+        s7_set_immutable(sc, sym);
+        return sym;
+    }
+
+    template <typename T>
+    s7_pointer define_const(std::string_view name, T &&value, std::string_view doc = "")
+    {
+        auto sym = define(name, std::move(value), doc);
+        s7_set_immutable(sc, sym);
+        return sym;
+    }
+    */
+
+    Variable operator[](std::string_view name);
+
+    List to_list() const { return List(s7_let_to_list(sc, let)); }
+};
+
 enum class Type {
     Any, Undefined, Unspecified, Nil, Eof, Let, OpenLet,
     Boolean, Integer, Real, String, Character, Ratio, Complex,
@@ -169,6 +221,7 @@ Type scheme_type()
     else if constexpr(std::is_pointer_v<T>)                     { return Type::CPointer;    }
     else if constexpr(std::is_same_v<T, List>)                  { return Type::List;        }
     else if constexpr(std::is_same_v<T, Function>)              { return Type::Procedure;   }
+    else if constexpr(std::is_same_v<T, Let>)                   { return Type::Let; }
     // allowed in to(), but with truncation
     else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) { return Type::Integer; }
     else if constexpr(std::is_same_v<T, float>)                                                      { return Type::Real; }
@@ -262,8 +315,11 @@ namespace detail {
         else if constexpr(std::is_pointer_v<T>)                     { return s7_is_c_pointer(p);    }
         else if constexpr(std::is_same_v<T, List>)                  { return s7_is_pair(p);         }
         else if constexpr(std::is_same_v<T, Function>)              { return s7_is_procedure(p);    }
+        else if constexpr(std::is_same_v<T, Let>)                   { return s7_is_let(p);    }
+        // allowed in to() with truncation
         else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_is_integer(p); }
         else if constexpr(std::is_same_v<T, float>) { return s7_is_real(p); }
+        // anything else
         return s7_is_c_object(p) && s7_c_object_type(p) == detail::get_type_tag<T>(sc);
     }
 
@@ -287,6 +343,7 @@ namespace detail {
         else if constexpr(std::is_pointer_v<T>)                     { return reinterpret_cast<T>(s7_c_pointer(p));                              }
         else if constexpr(std::is_same_v<T, List>)                  { return List(p);                                                           }
         else if constexpr(std::is_same_v<T, Function>)              { return Function(p);                                                       }
+        else if constexpr(std::is_same_v<T, Let>)                   { return Let(sc, p);                                                        }
         else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) {
             WARN_PRINT(";truncanting s7_int (%zu bytes) to %zu bytes\n", sizeof(s7_int), sizeof(T));
             return static_cast<T>(s7_integer(p));
@@ -437,8 +494,6 @@ struct Constructors {
 // and kept intentionally simple (you shouldn't need to use these except for cases like operators)
 template <typename Sig>             inline constexpr Sig    *resolve(Sig    *f) { return f; }
 template <typename Sig, typename C> inline constexpr Sig C::*resolve(Sig C::*f) { return f; }
-
-struct Variable;
 
 class Scheme {
     s7_scheme *sc;
@@ -829,6 +884,8 @@ public:
         else if constexpr(std::is_same_v<Type, std::string_view>)                                { return s7_make_string_with_length(sc, x.data(), x.size());  }
         else if constexpr(std::is_same_v<Type, unsigned char>)                                   { return s7_make_character(sc, x);                            }
         else if constexpr(std::is_same_v<Type, List>)                                            { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, Function>)                                        { return x.p;                                                 }
+        else if constexpr(std::is_same_v<Type, Let>)                                             { return x.p;                                                 }
         else if constexpr(std::is_same_v<Type, Values>)                                          { return x.p;                                                 }
         else if constexpr(std::is_same_v<Type, std::span<s7_pointer>> || std::is_same_v<Type, std::vector<s7_pointer>>) {
             auto vec = s7_make_vector(sc, x.size());
@@ -1521,36 +1578,31 @@ public:
 class Variable {
     Scheme *scheme;
     s7_pointer sym;
+    s7_pointer let;
 
 public:
-    Variable(Scheme *scheme, s7_pointer sym) : scheme{scheme}, sym{sym} {}
+    Variable(Scheme *scheme, s7_pointer sym, s7_pointer let) : scheme(scheme), sym(sym), let(let) {}
 
     template <typename T>
     Variable & operator=(const T &v)
     {
-        s7_symbol_set_value(scheme->ptr(), sym, scheme->from(v));
+        s7_let_set(scheme->ptr(), let, sym, scheme->from(v));
         return *this;
     }
 
     template <typename T>
     Variable & operator=(T &&v)
     {
-        s7_symbol_set_value(scheme->ptr(), sym, scheme->from(std::move(v)));
+        s7_let_set(scheme->ptr(), let, sym, scheme->from(std::move(v)));
         return *this;
     }
 
-    template <typename T> T to()        { return scheme->to<T>(s7_symbol_value(scheme->ptr(), sym)); }
-    template <typename T> auto to_opt() { return scheme->to_opt<T>(s7_symbol_value(scheme->ptr(), sym)); }
+    template <typename T> T to()        { return scheme->to<T>(s7_let_ref(scheme->ptr(), let, sym)); }
+    template <typename T> auto to_opt() { return scheme->to_opt<T>(s7_let_ref(scheme->ptr(), let, sym)); }
 };
 
-Variable Scheme::operator[](std::string_view name)
-{
-    auto sym = s7_symbol_table_find_name(sc, name.data());
-    if (!sym) {
-        sym = s7_define_variable(sc, name.data(), s7_nil(sc));
-    }
-    return Variable(this, sym);
-}
+Variable Scheme::operator[](std::string_view name) { return Variable(this, s7_make_symbol(sc, name.data()), s7_rootlet(sc)); }
+Variable    Let::operator[](std::string_view name) { return Variable(reinterpret_cast<Scheme *>(&sc), s7_make_symbol(sc, name.data()), let); }
 
 struct Equal {
     Scheme *sc;
