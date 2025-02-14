@@ -424,6 +424,9 @@ public:
     iterator end() { return iterator(); }
 };
 
+template <typename T> struct is_varargs { static constexpr inline bool value = false; };
+template <typename T> struct is_varargs<VarArgs<T>> { static constexpr inline bool value = true; };
+
 namespace errors {
 
 struct Error {
@@ -790,10 +793,10 @@ class Scheme {
         // substitute op
         if (!substitured_ops.contains(op)) {
             auto doc = s7_documentation(sc, s7_name_to_value(sc, opname));
-                 if (op == MethodOp::Add) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Add>()); }
-            else if (op == MethodOp::Sub) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Sub>()); }
-            else if (op == MethodOp::Mul) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Mul>()); }
-            else if (op == MethodOp::Div) { define_varargs_function(opname, doc, make_method_op_function<MethodOp::Div>()); }
+                 if (op == MethodOp::Add) { define_function(opname, doc, make_method_op_function<MethodOp::Add>()); }
+            else if (op == MethodOp::Sub) { define_function(opname, doc, make_method_op_function<MethodOp::Sub>()); }
+            else if (op == MethodOp::Mul) { define_function(opname, doc, make_method_op_function<MethodOp::Mul>()); }
+            else if (op == MethodOp::Div) { define_function(opname, doc, make_method_op_function<MethodOp::Div>()); }
             substitured_ops.insert(op);
         }
     }
@@ -1173,12 +1176,12 @@ public:
                     : opts.unsafe_body                        ? s7_define_semisafe_typed_function
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
-        // if constexpr(std::is_same_v<typename, FunctionTraits<F>::Argument<0>::Type {
-        //  return define(sc, _name, f, 0, 0, true, 
-        // } else {
+        if constexpr(is_varargs<typename FunctionTraits<F>::Argument<0>::Type>::value) {
+            return define(sc, _name, f, 0, 0, true, doc.data(), sig);
+        } else {
             constexpr auto NumArgs = FunctionTraits<F>::arity;
             return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
-        // }
+        }
     }
 
     template <typename... Fns>

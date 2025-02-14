@@ -236,12 +236,12 @@ void test_varargs()
 
 int main()
 {
-    test_scheme_defined_function();
+    // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
     // test_set();
-    // test_v2();
+    test_v2();
     // test_star_fns();
     // test_varargs();
 }
