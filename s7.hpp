@@ -1214,18 +1214,6 @@ public:
         s7_define_typed_function_star(sc, _name, f, arglist_desc.data(), doc.data(), sig);
     }
 
-    template <typename F>
-    void define_varargs_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
-    {
-        auto _name = s7_string(save_string(name));
-        auto f = make_s7_function(_name, func);
-        auto define = opts.unsafe_body && opts.unsafe_arglist ? s7_define_unsafe_typed_function
-                    : opts.unsafe_body                        ? s7_define_semisafe_typed_function
-                    :                                           s7_define_typed_function;
-        auto sig = make_signature(func);
-        define(sc, _name, f, 0, 0, true, doc.data(), sig);
-    }
-
     void define_macro(std::string_view name, std::string_view doc, s7_function f)
     {
         auto _name = s7_string(save_string(name));
@@ -1287,15 +1275,6 @@ public:
         auto _name = s7_string(save_string(name));
         auto f = make_s7_function(_name, func);
         return Function(s7_make_function_star(sc, _name, f, arglist_desc.data(), doc.data()));
-    }
-
-    template <typename F>
-    Function make_varargs_function(std::string_view name, std::string_view doc, F &&func)
-    {
-        auto _name = s7_string(save_string(name));
-        auto f = make_s7_function(_name, func);
-        auto sig = make_signature(func);
-        return Function(s7_make_typed_function(sc, _name, f, 0, 0, true, doc.data(), sig));
     }
 
     /* usertypes */

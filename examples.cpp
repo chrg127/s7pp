@@ -135,9 +135,9 @@ void example_add_extension()
     s7::Scheme scheme;
     auto old_add = scheme["+"].to<s7::Function>();
     auto old_string_append = scheme["string-append"].to<s7::Function>();
-    scheme.define_varargs_function("+", "(+ ...) adds or appends its arguments",
+    scheme.define_function("+", "(+ ...) adds or appends its arguments",
         [&scheme, old_add, old_string_append](s7::VarArgs<s7_pointer> args) {
-            return scheme.apply(scheme.is<std::string>(args[0]) ? old_string_append : old_add, args);
+            return scheme.apply(scheme.is<std::string_view>(args[0]) ? old_string_append : old_add, args);
         }
     );
     scheme.repl();
@@ -186,7 +186,7 @@ void example_macro()
 void example_generic_function()
 {
     s7::Scheme scheme;
-    scheme.define_varargs_function("plus",
+    scheme.define_function("plus",
         "(plus obj ...) applies obj's plus method to obj and any trailing arguments.",
         [&](s7::VarArgs<s7_pointer> args) {
             auto obj = args[0];
@@ -415,15 +415,15 @@ int main(int argc, char *argv[])
     // example_cpp_repl();
     // example_listener_dax();
     // example_ports_redirect();
-    // example_add_extension();
+    example_add_extension();
     // example_add_extension_method();
     // example_star_function();
     // example_macro();
-    // example_generic_function();
+    example_generic_function();
     // example_signals_continuations();
     // example_notification();
     // example_namespace(argc, argv);
-    example_handle_errors();
+    // example_handle_errors();
     // example_hooks();
     // example_load_library
 }

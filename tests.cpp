@@ -223,7 +223,7 @@ void test_from()
 void test_varargs()
 {
     s7::Scheme scheme;
-    scheme.define_varargs_function("add", "doc", [](s7::VarArgs<int> args) -> int {
+    scheme.define_function("add", "doc", [](s7::VarArgs<int> args) -> int {
         int sum = 0;
         for (auto it = args.begin(); it != args.end(); ++it) {
             auto arg = *it;
