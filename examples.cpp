@@ -263,19 +263,15 @@ void example_namespace(int argc, char *argv[])
      * "func1" and "var1" will be placed in an anonymous environment,
      * accessible from Scheme via the global variable "lib-exports"
      */
-    auto new_env = s7_sublet(scheme.ptr(), s7_curlet(scheme.ptr()), scheme.nil());
+    auto new_env = s7::Let(scheme.ptr(), s7_sublet(scheme.ptr(), s7_curlet(scheme.ptr()), scheme.nil()));
     /* make a private environment for func1 and var1 below (this is our "namespace") */
-    scheme.protect(new_env);
-    s7_define(scheme.ptr(), new_env, scheme.sym("func1"),
-        scheme.make_function("func1", "func1 adds 1 to its argument", [](s7_int x) {
-            return x + 1;
-        }).p
-    );
-    s7_define(scheme.ptr(), new_env, scheme.sym("var1"), scheme.from(32));
+    scheme.protect(new_env.ptr());
+    new_env["func1"] = scheme.make_function("func1", "func1 adds 1 to its argument", [](s7_int x) { return x + 1; });
+    new_env["var1"] = 32;
     /* those two symbols are now defined in the new environment */
 
     /* add "lib-exports" to the global environment */
-    scheme.define("lib-exports", s7::Let(scheme.ptr(), new_env).to_list());
+    scheme["lib-exports"] = new_env.to_list();
 
     if (argc == 2) {
         fprintf(stderr, "load %s\n", argv[1]);
@@ -415,11 +411,11 @@ int main(int argc, char *argv[])
     // example_cpp_repl();
     // example_listener_dax();
     // example_ports_redirect();
-    example_add_extension();
+    // example_add_extension();
     // example_add_extension_method();
     // example_star_function();
     // example_macro();
-    example_generic_function();
+    // example_generic_function();
     // example_signals_continuations();
     // example_notification();
     // example_namespace(argc, argv);
