@@ -511,6 +511,8 @@ struct VarArgs {
     s7_int arg_n;
 
 public:
+    using Type = T;
+
     VarArgs(s7_scheme *sc, s7_pointer p, const char *caller)
         : sc(sc), p(p), caller(caller), arg_n(1) {}
 
@@ -534,7 +536,21 @@ public:
         }
     }
 
-    s7_pointer operator[](std::size_t i) const { return s7_list_ref(sc, p, i); }
+    T operator[](std::size_t i) const
+    {
+        if constexpr(std::is_same_v<T, s7_pointer>) {
+            return s7_list_ref(sc, p, i);
+        } else {
+            auto r = s7_list_ref(sc, p, i);
+#ifdef S7_DEBUGGING
+            if (!detail::is<T>(sc, r)) {
+                return detail::to<T>(sc, s7_wrong_type_arg_error(sc, caller, arg_n, r, detail::type_to_string<T>(sc).data()));
+            }
+#endif
+            return detail::to<T>(sc, r);
+        }
+    }
+
     std::size_t size() const { return s7_list_length(sc, p); }
     VarArgs cdr() const    { return VarArgs(sc, s7_cdr(p), caller, arg_n+1); }
     s7_pointer ptr() const { return p; }
@@ -564,7 +580,7 @@ public:
     iterator end() { return iterator(); }
 };
 
-template <typename T> struct is_varargs { static constexpr inline bool value = false; };
+template <typename T> struct is_varargs             { static constexpr inline bool value = false; };
 template <typename T> struct is_varargs<VarArgs<T>> { static constexpr inline bool value = true; };
 
 namespace errors {
@@ -835,7 +851,7 @@ class Scheme {
             return s7_error(sc, s7_make_symbol(sc, "no-overload-match"), scheme.list(
                 make_message(NumFns),
                 s7_array_to_list(sc, types.size(), types.data()),
-                scheme.make_signature(&std::remove_cvref_t<Fns>::operator())...
+                scheme.make_signature(&Fns::operator())...
             ).ptr());
         };
     }
@@ -1111,46 +1127,19 @@ public:
     s7_pointer sym(std::string_view name) { return s7_make_symbol(sc, name.data()); }
 
     /* signatures */
-    template <typename R, typename... Args>
-    s7_pointer make_signature(R (*)(Args...))
-    {
-        return s7_make_signature(sc, sizeof...(Args) + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-    }
-
-    template <typename C, typename R, typename... Args>
-    s7_pointer make_signature(R (C::*)(Args...))
-    {
-        return s7_make_signature(sc, sizeof...(Args) + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-    }
-
-    template <typename C, typename R, typename... Args>
-    s7_pointer make_signature(R (C::*)(Args...) const)
-    {
-        return s7_make_signature(sc, sizeof...(Args) + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-    }
-
-    template <typename R, typename T>
-    s7_pointer make_signature(R (*)(VarArgs<T>))
-    {
-        return s7_make_circular_signature(sc, 0, 2, type_is_fn<R, true>(), type_is_fn<T>());
-    }
-
-    template <typename C, typename R, typename T>
-    s7_pointer make_signature(R (C::*)(VarArgs<T>))
-    {
-        return s7_make_circular_signature(sc, 1, 2, type_is_fn<R, true>(), type_is_fn<T>());
-    }
-
-    template <typename C, typename R, typename T>
-    s7_pointer make_signature(R (C::*)(VarArgs<T>) const)
-    {
-        return s7_make_circular_signature(sc, 1, 2, type_is_fn<R, true>(), type_is_fn<T>());
-    }
-
     template <typename F>
     s7_pointer make_signature(F &&)
     {
-        return make_signature(&std::remove_cvref_t<F>::operator());
+        using R = typename FunctionTraits<F>::ReturnType;
+        constexpr auto Arity = FunctionTraits<F>::arity;
+        using LastArg = typename FunctionTraits<F>::Argument<Arity-1>::Type;
+        return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
+            if constexpr(is_varargs<LastArg>::value) {
+                return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
+            } else {
+                return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
+            }
+        });
     }
 
     /* calling functions */
@@ -1528,6 +1517,7 @@ public:
     {
         if constexpr(std::is_same_v<T, s7_pointer>) { return s7_t(sc); }
         if constexpr(std::is_same_v<T, Values>) { return sym("values"); }
+        if constexpr(is_varargs<T>::value) { return type_is_fn<typename T::Type, OutputType>(); }
         auto s = std::string(type_to_string<T, OutputType>()) + "?";
         return sym(s.c_str());
     }

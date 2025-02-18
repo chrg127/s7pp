@@ -234,6 +234,18 @@ void test_varargs()
     scheme.repl();
 }
 
+void test_sig()
+{
+    auto f = [](s7_int x) -> s7_int { return x + 1; };
+    auto g = [](s7::VarArgs<s7_int> args) { return args[0]; };
+    s7::Scheme scheme;
+    scheme.make_usertype<Set>("set", s7::Constructors([&]() { return Set(scheme); }));
+    printf("%s\n", scheme.to_string(scheme.make_signature(f)).data());
+    printf("%s\n", scheme.to_string(scheme.make_signature(g)).data());
+    printf("%s\n", scheme.to_string(scheme.make_signature(&Set::add)).data());
+    scheme.repl();
+}
+
 int main()
 {
     // test_scheme_defined_function();
@@ -241,8 +253,9 @@ int main()
     // test_conversion();
     // test_define_function();
     // test_set();
-    test_v2();
+    // test_v2();
     // test_star_fns();
     // test_varargs();
+    test_sig();
 }
 
