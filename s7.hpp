@@ -644,9 +644,15 @@ template <typename... Fns>
 struct Constructors {
     std::string_view name = "";
     Overload<Fns...> overload;
-
     explicit Constructors(Fns&&... fns) : name(""), overload(std::forward<Fns>(fns)...) {}
     explicit Constructors(std::string_view name, Fns&&... fns) : name(name), overload(std::forward<Fns>(fns)...) {}
+};
+
+template <>
+struct Constructors<> {
+    std::string_view name = "";
+    Constructors() = default;
+    explicit Constructors(std::string_view name) : name(name) {}
 };
 
 // implementation taken from https://github.com/ThePhD/sol2/blob/develop/include/sol/resolve.hpp
@@ -1132,14 +1138,18 @@ public:
     {
         using R = typename FunctionTraits<F>::ReturnType;
         constexpr auto Arity = FunctionTraits<F>::arity;
-        using LastArg = typename FunctionTraits<F>::Argument<Arity-1>::Type;
-        return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
-            if constexpr(is_varargs<LastArg>::value) {
-                return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-            } else {
-                return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-            }
-        });
+        if constexpr(Arity == 0) {
+            return s7_make_signature(sc, 1, type_is_fn<typename FunctionTraits<F>::ReturnType, true>());
+        } else {
+            using LastArg = typename FunctionTraits<F>::Argument<Arity-1>::Type;
+            return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
+                if constexpr(is_varargs<LastArg>::value) {
+                    return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
+                } else {
+                    return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
+                }
+            });
+        }
     }
 
     /* calling functions */
@@ -1182,12 +1192,13 @@ public:
                     : opts.unsafe_body                        ? s7_define_semisafe_typed_function
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
-        if constexpr(is_varargs<typename FunctionTraits<F>::Argument<0>::Type>::value) {
-            return define(sc, _name, f, 0, 0, true, doc.data(), sig);
-        } else {
-            constexpr auto NumArgs = FunctionTraits<F>::arity;
-            return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
+        if constexpr(FunctionTraits<F>::arity > 0) {
+            if constexpr(is_varargs<typename FunctionTraits<F>::Argument<0>::Type>::value) {
+                return define(sc, _name, f, 0, 0, true, doc.data(), sig);
+            }
         }
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
     }
 
     template <typename... Fns>
@@ -1291,27 +1302,11 @@ public:
         detail::TypeTag<T>::tag.insert_or_assign(reinterpret_cast<uintptr_t>(sc), tag);
         detail::TypeTag<T>::let.insert_or_assign(reinterpret_cast<uintptr_t>(sc), let);
 
-        if constexpr(sizeof...(Fns) != 0) {
-            auto doc = std::format("(make-{}) creates a new {}", name, name);
-            if (constructors.name.empty()) {
-                auto _name = std::format("make-{}", name);
-                define_function(_name, doc.c_str(), std::move(constructors.overload));
-            } else {
-                define_function(constructors.name, doc.c_str(), std::move(constructors.overload));
-            }
-        } else if constexpr(requires { T(); }) {
-            auto ctor_name = std::format("make-{}", name);
-            auto doc = std::format("(make-{}) creates a new {}", name, name);
-            define_function(s7_string(save_string(ctor_name)), doc.c_str(), [this, tag]() -> s7_pointer {
-                return make_c_object(tag, new T());
-            });
-        } else if constexpr(requires { T(*this); }) {
-            auto ctor_name = std::format("make-{}", name);
-            auto doc = std::format("(make-{}) creates a new {}", name, name);
-            define_function(s7_string(save_string(ctor_name)), doc.c_str(), [this, tag]() -> s7_pointer {
-                return make_c_object(tag, new T(*this));
-            });
-        }
+        auto doc = std::format("(make-{} ...) creates a new {}", name, name);
+        auto ctor_name = !constructors.name.empty() ? constructors.name.data() : std::format("make-{}", name).c_str();
+             if constexpr(sizeof...(Fns) != 0)    { define_function(ctor_name, doc.c_str(), std::move(constructors.overload)); }
+        else if constexpr(requires { T(); })      { define_function(ctor_name, doc.c_str(), [this, tag]() -> s7_pointer { return make_c_object(tag, new T()); }); }
+        else if constexpr(requires { T(*this); }) { define_function(ctor_name, doc.c_str(), [this, tag]() -> s7_pointer { return make_c_object(tag, new T(*this)); }); }
 
         s7_c_type_set_gc_free(sc, tag, [](s7_scheme *, s7_pointer obj) -> s7_pointer {
             T *o = reinterpret_cast<T *>(s7_c_object_value(obj));
@@ -1399,7 +1394,7 @@ public:
     }
 
     template <typename T, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors = {})
     {
         return make_usertype<T>(name, constructors, s7_inlet(sc, s7_nil(sc)));
     }
