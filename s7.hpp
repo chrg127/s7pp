@@ -582,22 +582,24 @@ public:
 
 template <typename T> struct is_varargs             { static constexpr inline bool value = false; };
 template <typename T> struct is_varargs<VarArgs<T>> { static constexpr inline bool value = true; };
+template <typename T> constexpr bool is_varargs_v = is_varargs<T>::value;
+
+template <typename F>
+constexpr bool function_has_varargs()
+{
+    if constexpr(FunctionTraits<F>::arity == 0) {
+        return false;
+    } else if constexpr(!is_varargs_v<typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type>) {
+        return false;
+    }
+    return true;
+}
 
 namespace detail {
-    template <typename F, typename R>
-    s7_pointer call_fn_zero_args(s7_scheme *sc)
-    {
-        auto &fn = detail::LambdaTable<F>::lambda;
-        if constexpr(std::is_same_v<R, void>) {
-            fn();
-        } else {
-            return detail::from(sc, fn());
-        }
-    }
-
-    template <typename F, std::size_t NumArgs, typename R, typename... Args>
+    template <typename F, typename R, typename... Args>
     s7_pointer call_fn(s7_scheme *sc, s7_pointer args)
     {
+        constexpr auto NumArgs = sizeof...(Args);
         auto arglist = List(args);
         std::array<s7_pointer, NumArgs> arr;
         for (std::size_t i = 0; i < NumArgs; i++) {
@@ -634,7 +636,8 @@ namespace detail {
             }(std::make_index_sequence<NumArgs>()));
         }
     }
-    template <typename F, std::size_t NumArgs, typename R, typename T>
+
+    template <typename F, typename R, typename T>
     s7_pointer call_fn_varargs(s7_scheme *sc, s7_pointer args)
     {
         auto &fn = detail::LambdaTable<F>::lambda;
@@ -658,21 +661,62 @@ namespace detail {
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             return FunctionTraits<F>::call_with_args([&]<typename...Args>() {
                 using R = typename FunctionTraits<F>::ReturnType;
-                constexpr auto NumArgs = sizeof...(Args);
-                if constexpr(NumArgs == 0) {
-                    return detail::call_fn_zero_args<L, R>(sc);
+                if constexpr(function_has_varargs<F>()) {
+                    using LastArg = typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type;
+                    return detail::call_fn_varargs<L, R, typename LastArg::Type>(sc, args);
                 } else {
-                    using LastArg = typename FunctionTraits<F>::Argument<NumArgs - 1>::Type;
-                    if constexpr(is_varargs<LastArg>::value) {
-                        return detail::call_fn_varargs<L, NumArgs, R, typename LastArg::Type>(sc, args);
-                    } else {
-                        return detail::call_fn<L, NumArgs, R, Args...>(sc, args);
-                    }
+                    return detail::call_fn<L, R, Args...>(sc, args);
                 }
             });
         };
     }
 
+    template <typename F, typename R, typename... Args>
+    s7_pointer _match_fn(s7_scheme *sc, s7_pointer args, s7_int length)
+    {
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        if (length != NumArgs) {
+            return nullptr;
+        }
+
+        auto arglist = s7::List(args);
+        std::array<s7_pointer, NumArgs> arr;
+        for (std::size_t i = 0; i < NumArgs; i++) {
+            arr[i] = arglist.advance();
+        }
+
+        auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            return std::array<bool, NumArgs> { detail::is<Args>(sc, arr[Is])...  };
+        }(std::make_index_sequence<NumArgs>());
+        auto matches = std::find(bools.begin(), bools.end(), false) == bools.end();
+        if (!matches) {
+            return nullptr;
+        }
+
+        auto &fn = detail::LambdaTable<std::remove_cvref_t<F>>::lambda;
+        if constexpr(std::is_same_v<R, void>) {
+            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                fn(detail::to<Args>(sc, arr[Is])...);
+            }(std::make_index_sequence<NumArgs>());
+            return s7_unspecified(sc);
+        } else {
+            return detail::from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return fn(detail::to<Args>(sc, arr[Is])...);
+            }(std::make_index_sequence<NumArgs>()));
+        }
+    }
+
+    template <typename F>
+    s7_pointer match_fn(s7_scheme *sc, s7_pointer args, s7_int length)
+    {
+        return FunctionTraits<F>::call_with_args([&]<typename...Args>() {
+            using R = typename FunctionTraits<F>::ReturnType;
+            // VarArgs isn't allowed here for now
+            // static_assert(FunctionTraits<F>::arity == 0 || !is_varargs<typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity-1>::Type>::value,
+                          // "VarArgs isn't allowed in overloads");
+            return _match_fn<F, R, Args...>(sc, args, length);
+        });
+    }
 } // namespace detail
 
 namespace errors {
@@ -757,81 +801,6 @@ class Scheme {
     // NOTE: any following field can't be accessed inside non-capturing lambdas
     std::unordered_set<MethodOp> substitured_ops;
 
-    // called from call_fn and match_fn
-    // varargs always matches... is it an error to allow it in ctors?
-    template <typename L, typename R, typename T>
-    s7_pointer _call_varargs_fn(s7_pointer args)
-    {
-        auto &fn = detail::LambdaTable<L>::lambda;
-        auto name = detail::LambdaTable<L>::name
-            .find(reinterpret_cast<uintptr_t>(sc))->second;
-        if constexpr(std::is_same_v<R, void>) {
-            fn(VarArgs(sc, args, name));
-            return unspecified();
-        } else {
-            return from<R>(fn(VarArgs<T>(sc, args, name)));
-        }
-    }
-
-    template <typename F, typename R, typename... Args>
-    s7_pointer match_fn(s7_int length, s7_pointer args)
-    {
-        constexpr auto NumArgs = FunctionTraits<F>::arity;
-        if (length != NumArgs) {
-            return nullptr;
-        }
-
-        auto arglist = s7::List(args);
-        std::array<s7_pointer, NumArgs> arr;
-        for (std::size_t i = 0; i < NumArgs; i++) {
-            arr[i] = arglist.advance();
-        }
-
-        auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            return std::array<bool, NumArgs> { is<Args>(arr[Is])...  };
-        }(std::make_index_sequence<NumArgs>());
-        auto matches = std::find(bools.begin(), bools.end(), false) == bools.end();
-        if (!matches) {
-            return nullptr;
-        }
-
-        auto &fn = detail::LambdaTable<std::remove_cvref_t<F>>::lambda;
-        if constexpr(std::is_same_v<R, void>) {
-            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                fn(to<Args>(arr[Is])...);
-            }(std::make_index_sequence<NumArgs>());
-            return s7_unspecified(sc);
-        } else {
-            return from<R>([&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return fn(to<Args>(arr[Is])...);
-            }(std::make_index_sequence<NumArgs>()));
-        }
-    }
-
-    template <typename F, typename R, typename... Args>
-    s7_pointer match_fn(s7_int length, s7_pointer args, R (F::*)(Args...))
-    {
-        return match_fn<F, R, Args...>(length, args);
-    }
-
-    template <typename F, typename R, typename... Args>
-    s7_pointer match_fn(s7_int length, s7_pointer args, R (F::*)(Args...) const)
-    {
-        return match_fn<F, R, Args...>(length, args);
-    }
-
-    template <typename F, typename R, typename T>
-    s7_pointer match_fn(s7_int, s7_pointer args, R (F::*)(VarArgs<T>))
-    {
-        return detail::call_fn_varargs<F, 1, R, T>(sc, args);
-    }
-
-    template <typename F, typename R, typename T>
-    s7_pointer match_fn(s7_int, s7_pointer args, R (F::*)(VarArgs<T>) const)
-    {
-        return detail::call_fn_varargs<F, 1, R, T>(sc, args);
-    }
-
     template <typename... Fns>
     s7_function _make_overload(Fns&&... fns)
     {
@@ -845,7 +814,7 @@ class Scheme {
             auto &scheme = *reinterpret_cast<Scheme *>(&sc);
             auto length = s7_list_length(sc, args);
             auto results = std::array<s7_pointer, NumFns> {
-                scheme.match_fn<Fns>(length, args, &Fns::operator())...
+                detail::match_fn<Fns>(sc, args, length)...
             };
 
             auto make_message = [&](int n) -> s7_pointer {
@@ -1151,18 +1120,13 @@ public:
     {
         using R = typename FunctionTraits<F>::ReturnType;
         constexpr auto Arity = FunctionTraits<F>::arity;
-        if constexpr(Arity == 0) {
-            return s7_make_signature(sc, 1, type_is_fn<typename FunctionTraits<F>::ReturnType, true>());
-        } else {
-            using LastArg = typename FunctionTraits<F>::Argument<Arity-1>::Type;
-            return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
-                if constexpr(is_varargs<LastArg>::value) {
-                    return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-                } else {
-                    return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-                }
-            });
-        }
+        return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
+            if constexpr(function_has_varargs<F>()) {
+                return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
+            } else {
+                return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
+            }
+        });
     }
 
     /* calling functions */
@@ -1205,13 +1169,12 @@ public:
                     : opts.unsafe_body                        ? s7_define_semisafe_typed_function
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
-        if constexpr(FunctionTraits<F>::arity > 0) {
-            if constexpr(is_varargs<typename FunctionTraits<F>::Argument<0>::Type>::value) {
-                return define(sc, _name, f, 0, 0, true, doc.data(), sig);
-            }
+        if constexpr(function_has_varargs<F>()) {
+            return define(sc, _name, f, 0, 0, true, doc.data(), sig);
+        } else {
+            constexpr auto NumArgs = FunctionTraits<F>::arity;
+            return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
         }
-        constexpr auto NumArgs = FunctionTraits<F>::arity;
-        return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
     }
 
     template <typename... Fns>
@@ -1525,7 +1488,7 @@ public:
     {
         if constexpr(std::is_same_v<T, s7_pointer>) { return s7_t(sc); }
         if constexpr(std::is_same_v<T, Values>) { return sym("values"); }
-        if constexpr(is_varargs<T>::value) { return type_is_fn<typename T::Type, OutputType>(); }
+        if constexpr(is_varargs_v<T>) { return type_is_fn<typename T::Type, OutputType>(); }
         auto s = std::string(type_to_string<T, OutputType>()) + "?";
         return sym(s.c_str());
     }

@@ -185,6 +185,7 @@ void test_v2()
         s7::Constructors("v2",
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
+            // [](s7::VarArgs<s7_int>) -> v2 { return v2 { .x = 0, .y = 0 }; }),
         s7::Op::ToString, [](const v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
         s7::MethodOp::Add, &v2::operator+=,
         s7::MethodOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
@@ -233,11 +234,13 @@ void test_sig()
 {
     auto f = [](s7_int x) -> s7_int { return x + 1; };
     auto g = [](s7::VarArgs<s7_int> args) { return args[0]; };
+    auto h = []() { return 42; };
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set");
     printf("%s\n", scheme.to_string(scheme.make_signature(f)).data());
     printf("%s\n", scheme.to_string(scheme.make_signature(g)).data());
     printf("%s\n", scheme.to_string(scheme.make_signature(&Set::add)).data());
+    printf("%s\n", scheme.to_string(scheme.make_signature(h)).data());
     scheme.repl();
 }
 
@@ -247,8 +250,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
-    // test_v2();
+    // test_set();
+    test_v2();
     // test_star_fns();
     // test_varargs();
     // test_sig();
