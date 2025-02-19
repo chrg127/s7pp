@@ -151,7 +151,17 @@ void test_set()
 {
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
-        s7::Constructors([&]() { return Set(scheme); }),
+        s7::Constructors(
+            [&]() { return Set(scheme); },
+            [&](s7::VarArgs<s7_pointer> args)
+            {
+                auto s = Set(scheme);
+                for (auto p : args) {
+                    s.add(p);
+                }
+                return s;
+            }
+        ),
         s7::Op::GcMark,   [&](const Set &s) { return s.gc_mark(scheme); },
         s7::Op::ToString, [&](const Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
@@ -185,7 +195,6 @@ void test_v2()
         s7::Constructors("v2",
             []() -> v2 { return v2 { .x = 0, .y = 0 }; },
             [](double x, double y) -> v2 { return v2 { .x = x, .y = y }; }),
-            // [](s7::VarArgs<s7_int>) -> v2 { return v2 { .x = 0, .y = 0 }; }),
         s7::Op::ToString, [](const v2 &v) -> std::string { return std::format("v2({}, {})", v.x, v.y); },
         s7::MethodOp::Add, &v2::operator+=,
         s7::MethodOp::Sub, [](const v2 &a, const v2 &b) { return v2 { .x = a.x - b.x, .y = a.y - b.y }; },
@@ -196,6 +205,7 @@ void test_v2()
     );
     scheme.define_property("v2-x", "(v2-x v2) accesses x", [](const v2 &v) { return v.x; }, [](v2 &v, double x) { v.x = x; });
     scheme.define_property("v2-y", "(v2-y v2) accesses y", [](const v2 &v) { return v.y; }, [](v2 &v, double y) { v.y = y; });
+    scheme.define_function("test", "doc", s7::Overload([](s7_int x) { return x + 1; }, []() { return 0; }));
     scheme.repl();
 }
 
@@ -250,8 +260,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    // test_set();
-    test_v2();
+    test_set();
+    // test_v2();
     // test_star_fns();
     // test_varargs();
     // test_sig();

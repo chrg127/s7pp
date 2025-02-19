@@ -80,23 +80,3 @@ public:
 template <typename F> struct FunctionTraits<F  &> : public FunctionTraits<F> {};
 template <typename F> struct FunctionTraits<F &&> : public FunctionTraits<F> {};
 
-template <typename... Fns>
-constexpr auto max_arity()
-{
-    if constexpr(sizeof...(Fns) == 1) {
-        return (FunctionTraits<Fns>::arity, ...);
-    } else {
-        return std::max(FunctionTraits<Fns>::arity...);
-    }
-}
-
-template <typename... Fns>
-constexpr auto min_arity()
-{
-    if constexpr(sizeof...(Fns) == 1) {
-        return (FunctionTraits<Fns>::arity, ...);
-    } else {
-        return std::min(FunctionTraits<Fns>::arity...);
-    }
-}
-

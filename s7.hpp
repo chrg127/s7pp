@@ -481,6 +481,13 @@ namespace detail {
         Type t = scheme_type<T, OutputType>();
         return t != Type::CObject ? scheme_type_to_string(t) : detail::get_type_name<T>(sc);
     }
+
+    constexpr auto vmin(auto a) { return a; }
+    constexpr auto vmin(auto a, auto &&...args) { return std::min(a, vmin(args...)); }
+    constexpr auto vmax(auto a) { return a; }
+    constexpr auto vmax(auto a, auto &&...args) { return std::max(a, vmin(args...)); }
+    template <typename... Fns> constexpr auto max_arity() { return vmax(FunctionTraits<Fns>::arity...); }
+    template <typename... Fns> constexpr auto min_arity() { return vmin(FunctionTraits<Fns>::arity...); }
 } // namespace detail
 
 template <typename T>
@@ -595,6 +602,8 @@ constexpr bool function_has_varargs()
     return true;
 }
 
+template <typename F> constexpr bool function_has_varargs(F &&) { return function_has_varargs<F>(); }
+
 namespace detail {
     template <typename F, typename R, typename... Args>
     s7_pointer call_fn(s7_scheme *sc, s7_pointer args)
@@ -656,16 +665,15 @@ namespace detail {
         auto lambda = detail::as_lambda(fn);
         using L = std::remove_cvref_t<decltype(lambda)>;
         detail::LambdaTable<L>::lambda = lambda;
-        detail::LambdaTable<L>::name
-            .insert_or_assign(reinterpret_cast<uintptr_t>(sc), name);
+        detail::LambdaTable<L>::name.insert_or_assign(reinterpret_cast<uintptr_t>(sc), name);
         return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
             return FunctionTraits<F>::call_with_args([&]<typename...Args>() {
                 using R = typename FunctionTraits<F>::ReturnType;
                 if constexpr(function_has_varargs<F>()) {
                     using LastArg = typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type;
-                    return detail::call_fn_varargs<L, R, typename LastArg::Type>(sc, args);
+                    return call_fn_varargs<L, R, typename LastArg::Type>(sc, args);
                 } else {
-                    return detail::call_fn<L, R, Args...>(sc, args);
+                    return call_fn<L, R, Args...>(sc, args);
                 }
             });
         };
@@ -709,12 +717,15 @@ namespace detail {
     template <typename F>
     s7_pointer match_fn(s7_scheme *sc, s7_pointer args, s7_int length)
     {
+        using L = std::remove_cvref_t<F>;
         return FunctionTraits<F>::call_with_args([&]<typename...Args>() {
             using R = typename FunctionTraits<F>::ReturnType;
-            // VarArgs isn't allowed here for now
-            // static_assert(FunctionTraits<F>::arity == 0 || !is_varargs<typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity-1>::Type>::value,
-                          // "VarArgs isn't allowed in overloads");
-            return _match_fn<F, R, Args...>(sc, args, length);
+            if constexpr(function_has_varargs<F>()) {
+                using LastArg = typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type;
+                return call_fn_varargs<L, R, typename LastArg::Type>(sc, args);
+            } else {
+                return _match_fn<L, R, Args...>(sc, args, length);
+            }
         });
     }
 } // namespace detail
@@ -802,11 +813,13 @@ class Scheme {
     std::unordered_set<MethodOp> substitured_ops;
 
     template <typename... Fns>
-    s7_function _make_overload(Fns&&... fns)
+    s7_function _make_overload(std::string_view name, Fns&&... fns)
     {
         constexpr auto NumFns = sizeof...(Fns);
-        auto set = []<typename F>(F &&fn) {
-            detail::LambdaTable<std::remove_cvref_t<F>>::lambda = fn;
+        auto set = [&]<typename F>(F &&fn) {
+            using L = std::remove_cvref_t<F>;
+            detail::LambdaTable<L>::lambda = fn;
+            detail::LambdaTable<L>::name.insert_or_assign(reinterpret_cast<uintptr_t>(sc), name.data());
         };
         (set(fns), ...);
 
@@ -815,15 +828,6 @@ class Scheme {
             auto length = s7_list_length(sc, args);
             auto results = std::array<s7_pointer, NumFns> {
                 detail::match_fn<Fns>(sc, args, length)...
-            };
-
-            auto make_message = [&](int n) -> s7_pointer {
-                auto str = std::string("arglist ~a doesn't match any signature for this function\n"
-                                       ";valid signatures:");
-                for (auto i = 0; i < n; i++) {
-                    str += "\n;~a";
-                }
-                return scheme.from(str);
             };
 
             auto it = std::find_if(results.begin(), results.end(),
@@ -836,8 +840,14 @@ class Scheme {
             for (auto arg : s7::List(args)) {
                 types.push_back(s7_make_symbol(sc, scheme_type_to_string(scheme.type_of(arg)).data()));
             }
+            auto str = std::string("arglist ~a doesn't match any signature for this function\n"
+                                   ";valid signatures:");
+            for (auto i = 0u; i < NumFns; i++) {
+                str += "\n;~a";
+            }
+            auto msg = scheme.from(str);
             return s7_error(sc, s7_make_symbol(sc, "no-overload-match"), scheme.list(
-                make_message(NumFns),
+                msg,
                 s7_array_to_list(sc, types.size(), types.data()),
                 scheme.make_signature(&Fns::operator())...
             ).ptr());
@@ -1169,7 +1179,7 @@ public:
                     : opts.unsafe_body                        ? s7_define_semisafe_typed_function
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
-        if constexpr(function_has_varargs<F>()) {
+        if constexpr(function_has_varargs(func)) {
             return define(sc, _name, f, 0, 0, true, doc.data(), sig);
         } else {
             constexpr auto NumArgs = FunctionTraits<F>::arity;
@@ -1180,16 +1190,23 @@ public:
     template <typename... Fns>
     s7_pointer define_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
     {
-        constexpr auto MaxArgs = max_arity<Fns...>();
-        constexpr auto MinArgs = min_arity<Fns...>();
         auto f = std::apply([&]<typename ...F>(F &&...fns) {
-            return _make_overload(detail::as_lambda(fns)...);
+            return _make_overload(name, detail::as_lambda(fns)...);
         }, overload.fns);
         auto _name = s7_string(save_string(name));
         auto define = opts.unsafe_arglist || opts.unsafe_body
             ? s7_define_function
             : s7_define_safe_function;
-        return define(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data());
+        constexpr auto has_varargs = std::apply([&]<typename...F>(F &&...fs) {
+            return (function_has_varargs(fs) || ...);
+        }, overload.fns);
+        constexpr auto MinArgs = detail::min_arity<Fns...>();
+        if constexpr(has_varargs) {
+            return define(sc, _name, f, MinArgs, 0, true, doc.data());
+        } else {
+            constexpr auto MaxArgs = detail::max_arity<Fns...>();
+            return define(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data());
+        }
     }
 
     void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
@@ -1244,16 +1261,24 @@ public:
     template <typename... Fns>
     Function make_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
     {
-        constexpr auto MaxArgs = max_arity<Fns...>();
-        constexpr auto MinArgs = min_arity<Fns...>();
         auto f = std::apply([&]<typename ...F>(F &&...fns) {
-            return _make_overload(detail::as_lambda(fns)...);
+            return _make_overload(name, detail::as_lambda(fns)...);
         }, overload.fns);
         auto _name = s7_string(save_string(name));
         auto make = opts.unsafe_arglist || opts.unsafe_body
             ? s7_make_function
             : s7_make_safe_function;
-        return Function(make(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data()));
+        constexpr auto has_varargs = std::apply([&]<typename...F>(F &&...fs) {
+            return (function_has_varargs(fs) || ...);
+        }, overload.fns);
+        if constexpr(has_varargs) {
+            constexpr auto MinArgs = detail::min_arity<Fns...>();
+            return Function(make(sc, _name, f, MinArgs, 0, true, doc.data()));
+        } else {
+            constexpr auto MaxArgs = detail::max_arity<Fns...>();
+            constexpr auto MinArgs = detail::min_arity<Fns...>();
+            return Function(make(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data()));
+        }
     }
 
     Function make_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
