@@ -254,16 +254,25 @@ void test_sig()
     scheme.repl();
 }
 
+void test_type_of()
+{
+    s7::Scheme scheme;
+    scheme.make_usertype<v2>("v2", s7::Constructors("v2", []() { return v2 { .x = 0, .y = 0 }; }));
+    scheme.define_function("type-of2", "better type of", [&](s7_pointer p) { return scheme.sym(scheme.type_of(p)); });
+    scheme.repl();
+}
+
 int main()
 {
-    test_scheme_defined_function();
+    // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
     // test_set();
-    // test_v2();
+    test_v2();
     // test_star_fns();
     // test_varargs();
     // test_sig();
+    // test_type_of();
 }
 

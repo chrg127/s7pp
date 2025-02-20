@@ -1,5 +1,4 @@
 possibly:
-- simple let handling
 
 partially completed, not sure if actually completed:
 - more checks when defining ops on usertypes
@@ -12,3 +11,40 @@ probably won't do soon:
 - signature for overloads
 - multidimensional vectors
 - bignums
+
+    case Type::Any:           { return "s7_pointer";      }
+    case Type::Undefined:     { return "undefined";       }
+    case Type::Unspecified:   { return "unspecified";     }
+    case Type::Nil:           { return "null";            }
+    case Type::Eof:           { return "eof-object";      }
+    case Type::Let:           { return "let";             }
+    case Type::OpenLet:       { return "openlet";         }
+    case Type::Boolean:       { return "boolean";         }
+    case Type::Integer:       { return "integer";         }
+    case Type::Real:          { return "real";            }
+    case Type::String:        { return "string";          }
+    case Type::Character:     { return "char";            }
+    case Type::Ratio:         { return "rational";        }
+    case Type::Complex:       { return "complex";         }
+    case Type::Vector:        { return "vector";          }
+    case Type::IntVector:     { return "int-vector";      }
+    case Type::FloatVector:   { return "float-vector";    }
+    case Type::ByteVector:    { return "byte-vector";     }
+    case Type::ComplexVector: { return "complex-vector";  }
+    case Type::List:          { return "list";            }
+    case Type::CPointer:      { return "c-pointer";       }
+    case Type::CObject:       { return "c-object";        }
+    case Type::RandomState:   { return "random-state";    }
+    case Type::HashTable:     { return "hash-table";      }
+    case Type::InputPort:     { return "input-port";      }
+    case Type::OutputPort:    { return "output-port";     }
+    case Type::Syntax:        { return "syntax";          }
+    case Type::Symbol:        { return "symbol";          }
+    case Type::Keyword:       { return "keyword";         }
+    case Type::Procedure:     { return "procedure";       }
+    case Type::Macro:         { return "macro";           }
+    case Type::Dilambda:      { return "dilambda";        }
+    case Type::Values:        { return "values";          }
+    case Type::Iterator:      { return "iterator";        }
+    case Type::BigNum:        { return "bignum";          }
+
