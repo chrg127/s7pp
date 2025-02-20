@@ -266,7 +266,7 @@ void example_namespace(int argc, char *argv[])
     auto new_env = s7::Let(scheme.ptr(), s7_sublet(scheme.ptr(), s7_curlet(scheme.ptr()), scheme.nil()));
     /* make a private environment for func1 and var1 below (this is our "namespace") */
     scheme.protect(new_env.ptr());
-    new_env["func1"] = scheme.make_function("func1", "func1 adds 1 to its argument", [](s7_int x) { return x + 1; });
+    new_env.define_function("func1", "func1 adds 1 to its argument", [](s7_int x) { return x + 1; });
     new_env["var1"] = 32;
     /* those two symbols are now defined in the new environment */
 
@@ -418,7 +418,7 @@ int main(int argc, char *argv[])
     // example_generic_function();
     // example_signals_continuations();
     // example_notification();
-    // example_namespace(argc, argv);
+    example_namespace(argc, argv);
     // example_handle_errors();
     // example_hooks();
     // example_load_library

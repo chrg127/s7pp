@@ -849,6 +849,19 @@ namespace detail {
             return Function(make(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data()));
         }
     }
+
+    Function make_star_function(s7_scheme *sc, std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
+    {
+        return Function(s7_make_function_star(sc, s7_string(s7_make_semipermanent_string(sc, name.data())), f, arglist_desc.data(), doc.data()));
+    }
+
+    template <typename F>
+    Function make_star_function(s7_scheme *sc, std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
+    {
+        auto _name = s7_string(s7_make_semipermanent_string(sc, name.data()));
+        auto f = detail::make_s7_function(sc, _name, func);
+        return Function(s7_make_function_star(sc, _name, f, arglist_desc.data(), doc.data()));
+    }
 } // namespace detail
 
 namespace errors {
@@ -911,8 +924,23 @@ public:
 
     s7_pointer ptr() const { return let; }
 
-    template <typename T> s7_pointer define(std::string_view name, const T &value, std::string_view doc = "");
-    template <typename T> s7_pointer define(std::string_view name, T &&value, std::string_view doc = "");
+    template <typename T> s7_pointer define(std::string_view name, const T &value, std::string_view doc = "")
+    {
+        auto object = detail::from(sc, value);
+        auto sym = s7_make_symbol(sc, name.data());
+        s7_define(sc, let, sym, object);
+        s7_set_documentation(sc, sym, doc.data());
+        return sym;
+    }
+
+    template <typename T> s7_pointer define(std::string_view name, T &&value, std::string_view doc = "")
+    {
+        auto object = detail::from(sc, std::move(value));
+        auto sym = s7_make_symbol(sc, name.data());
+        s7_define(sc, let, sym, object);
+        s7_set_documentation(sc, sym, doc.data());
+        return sym;
+    }
 
     template <typename T>
     s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
@@ -933,27 +961,22 @@ public:
     Variable operator[](std::string_view name);
 
     List to_list() const { return List(s7_let_to_list(sc, let)); }
+
+    template <typename F>
+    s7_pointer define_function(std::string_view name, std::string_view doc, F &&fn, FunctionOpts opts = {})
+    {
+        auto f = detail::make_function(sc, name, doc, std::move(fn), opts);
+        define(name, f.p, doc);
+        return f.p;
+    }
+
+    template <typename F>
+    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F &&fn)
+    {
+        auto f = detail::make_star_function(sc, name, arglist_desc, doc, std::move(fn));
+        define(name, f.p, doc);
+    }
 };
-
-template <typename T>
-s7_pointer Let::define(std::string_view name, const T &value, std::string_view doc)
-{
-    auto object = detail::from(sc, value);
-    auto sym = s7_make_symbol(sc, name.data());
-    s7_define(sc, let, sym, object);
-    s7_set_documentation(sc, object, doc.data());
-    return sym;
-}
-
-template <typename T>
-s7_pointer Let::define(std::string_view name, T &&value, std::string_view doc)
-{
-    auto object = detail::from(sc, std::move(value));
-    auto sym = s7_make_symbol(sc, name.data());
-    s7_define(sc, let, sym, object);
-    s7_set_documentation(sc, object, doc.data());
-    return sym;
-}
 
 class Scheme {
     s7_scheme *sc;
@@ -1324,8 +1347,7 @@ public:
 
     void define_macro(std::string_view name, std::string_view doc, s7_function f)
     {
-        auto _name = s7_string(save_string(name));
-        s7_define_macro(sc, _name, f, 0, 0, true, doc.data());
+        s7_define_macro(sc, s7_string(save_string(name)), f, 0, 0, true, doc.data());
     }
 
     template <typename F>
@@ -1343,18 +1365,10 @@ public:
         return detail::make_function(sc, name, doc, std::move(func), opts);
     }
 
-    Function make_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
-    {
-        auto _name = s7_string(save_string(name));
-        return Function(s7_make_function_star(sc, _name, f, arglist_desc.data(), doc.data()));
-    }
-
     template <typename F>
-    Function make_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
+    Function make_star_function(s7_scheme *sc, std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
     {
-        auto _name = s7_string(save_string(name));
-        auto f = detail::make_s7_function(sc, _name, func);
-        return Function(s7_make_function_star(sc, _name, f, arglist_desc.data(), doc.data()));
+        return detail::make_star_function(sc, name, arglist_desc, doc, std::move(func));
     }
 
     /* usertypes */
