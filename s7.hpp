@@ -98,37 +98,27 @@ struct Function {
 
 struct Variable;
 
-class Let {
-    s7_scheme *sc;
-    s7_pointer let;
+struct Let;
 
-public:
-    explicit Let(s7_scheme *sc, s7_pointer let) : sc(sc), let(let) {}
+template <typename... Fns>
+struct Overload {
+    std::tuple<Fns...> fns;
+    explicit Overload(Fns&&... fns) : fns(fns...) {}
+};
 
-    s7_pointer ptr() const { return let; }
+template <typename... Fns>
+struct Constructors {
+    std::string_view name = "";
+    Overload<Fns...> overload;
+    explicit Constructors(Fns&&... fns) : name(""), overload(std::forward<Fns>(fns)...) {}
+    explicit Constructors(std::string_view name, Fns&&... fns) : name(name), overload(std::forward<Fns>(fns)...) {}
+};
 
-    template <typename T> s7_pointer define(std::string_view name, const T &value, std::string_view doc = "");
-    template <typename T> s7_pointer define(std::string_view name, T &&value, std::string_view doc = "");
-
-    template <typename T>
-    s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
-    {
-        auto sym = define(name, value, doc);
-        s7_set_immutable(sc, sym);
-        return sym;
-    }
-
-    template <typename T>
-    s7_pointer define_const(std::string_view name, T &&value, std::string_view doc = "")
-    {
-        auto sym = define(name, std::move(value), doc);
-        s7_set_immutable(sc, sym);
-        return sym;
-    }
-
-    Variable operator[](std::string_view name);
-
-    List to_list() const { return List(s7_let_to_list(sc, let)); }
+template <>
+struct Constructors<> {
+    std::string_view name = "";
+    Constructors() = default;
+    explicit Constructors(std::string_view name) : name(name) {}
 };
 
 enum class Type {
@@ -224,6 +214,11 @@ Type scheme_type()
     else                                                                                                { return Type::CObject;     }
 }
 
+struct FunctionOpts {
+    bool unsafe_body = false;
+    bool unsafe_arglist = false;
+};
+
 namespace detail {
     template <typename L>
     struct LambdaTable {
@@ -292,6 +287,43 @@ namespace detail {
         return f;
     }
 
+    Type type_of(s7_scheme *sc, s7_pointer p)
+    {
+             if (s7_is_null(sc, p))        { return Type::Nil;           }
+        else if (s7_is_unspecified(sc, p)) { return Type::Unspecified;   }
+        else if (s7_is_let(p))             { return Type::Let;           }
+        else if (s7_is_openlet(p))         { return Type::OpenLet;       }
+        else if (s7_is_boolean(p))         { return Type::Boolean;       }
+        else if (s7_is_integer(p))         { return Type::Integer;       }
+        else if (s7_is_real(p))            { return Type::Real;          }
+        else if (s7_is_string(p))          { return Type::String;        }
+        else if (s7_is_character(p))       { return Type::Character;     }
+        else if (s7_is_ratio(p))           { return Type::Ratio;         }
+        else if (s7_is_complex(p))         { return Type::Complex;       }
+        else if (s7_is_vector(p))          { return Type::Vector;        }
+        else if (s7_is_int_vector(p))      { return Type::IntVector;     }
+        else if (s7_is_float_vector(p))    { return Type::FloatVector;   }
+        else if (s7_is_byte_vector(p))     { return Type::ByteVector;    }
+        else if (s7_is_complex_vector(p))  { return Type::ComplexVector; }
+        else if (s7_is_pair(p))            { return Type::List;          }
+        else if (s7_is_c_pointer(p))       { return Type::CPointer;      }
+        else if (s7_is_c_object(p))        { return Type::CObject;       }
+        else if (s7_is_random_state(p))    { return Type::RandomState;   }
+        else if (s7_is_hash_table(p))      { return Type::HashTable;     }
+        else if (s7_is_input_port(sc, p))  { return Type::InputPort;     }
+        else if (s7_is_output_port(sc, p)) { return Type::OutputPort;    }
+        else if (s7_is_syntax(p))          { return Type::Syntax;        }
+        else if (s7_is_symbol(p))          { return Type::Symbol;        }
+        else if (s7_is_keyword(p))         { return Type::Keyword;       }
+        else if (s7_is_procedure(p))       { return Type::Procedure;     }
+        else if (s7_is_macro(sc, p))       { return Type::Macro;         }
+        else if (s7_is_dilambda(p))        { return Type::Dilambda;      }
+        else if (s7_is_multiple_value(p))  { return Type::Values;        }
+        else if (s7_is_iterator(p))        { return Type::Iterator;      }
+        else if (s7_is_bignum(p))          { return Type::BigNum;        }
+        else                               { return Type::Unknown;       }
+    }
+
     template <typename T>
     bool is(s7_scheme *sc, s7_pointer p)
     {
@@ -357,6 +389,8 @@ namespace detail {
         return obj;
     }
 
+    template <typename F> Function make_function(s7_scheme *sc, std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {});
+
     template <typename T>
     s7_pointer from(s7_scheme *sc, const T &x)
     {
@@ -406,8 +440,7 @@ namespace detail {
         } else if constexpr(std::is_function_v<std::remove_cvref_t<T>>
                   || std::is_function_v<std::remove_pointer_t<T>>
                   || requires { T::operator(); }) {
-            return nullptr;
-            // return make_function("anonymous", "generated by s7::Scheme::from()", x).p;
+            return make_function(sc, "anonymous", "generated by s7::Scheme::from()", x, {}).p;
         } else if constexpr(std::is_pointer_v<Type>) {
             return s7_make_c_pointer(sc, x);
         } else {
@@ -465,8 +498,7 @@ namespace detail {
         } else if constexpr(std::is_function_v<std::remove_cvref_t<T>>
                   || std::is_function_v<std::remove_pointer_t<T>>
                   || requires { T::operator(); }) {
-            return nullptr;
-            // return make_function("anonymous", "generated by s7::Scheme::from()", x).p;
+            return make_function(sc, "anonymous", "generated by s7::Scheme::from()", std::move(x), {}).p;
         } else if constexpr(std::is_pointer_v<Type>) {
             return s7_make_c_pointer(sc, x);
         } else {
@@ -489,26 +521,6 @@ namespace detail {
     template <typename... Fns> constexpr auto max_arity() { return vmax(FunctionTraits<Fns>::arity...); }
     template <typename... Fns> constexpr auto min_arity() { return vmin(FunctionTraits<Fns>::arity...); }
 } // namespace detail
-
-template <typename T>
-s7_pointer Let::define(std::string_view name, const T &value, std::string_view doc)
-{
-    auto object = detail::from(sc, value);
-    auto sym = s7_make_symbol(sc, name.data());
-    s7_define(sc, let, sym, object);
-    s7_set_documentation(sc, object, doc.data());
-    return sym;
-}
-
-template <typename T>
-s7_pointer Let::define(std::string_view name, T &&value, std::string_view doc)
-{
-    auto object = detail::from(sc, std::move(value));
-    auto sym = s7_make_symbol(sc, name.data());
-    s7_define(sc, let, sym, object);
-    s7_set_documentation(sc, object, doc.data());
-    return sym;
-}
 
 template <typename T>
 struct VarArgs {
@@ -728,6 +740,115 @@ namespace detail {
             }
         });
     }
+
+    template <typename T, bool OutputType = false>
+    s7_pointer type_is_fn(s7_scheme *sc)
+    {
+        if constexpr(std::is_same_v<T, s7_pointer>) { return s7_t(sc); }
+        if constexpr(std::is_same_v<T, Values>) { return s7_make_symbol(sc, "values"); }
+        if constexpr(is_varargs_v<T>) { return type_is_fn<typename T::Type, OutputType>(sc); }
+        auto s = std::string(type_to_string<T, OutputType>(sc)) + "?";
+        return s7_make_symbol(sc, s.c_str());
+    }
+
+    template <typename F>
+    s7_pointer make_signature(s7_scheme *sc, F &&)
+    {
+        using R = typename FunctionTraits<F>::ReturnType;
+        constexpr auto Arity = FunctionTraits<F>::arity;
+        return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
+            if constexpr(function_has_varargs<F>()) {
+                return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(sc), type_is_fn<Args>(sc)...);
+            } else {
+                return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(sc), type_is_fn<Args>(sc)...);
+            }
+        });
+    }
+
+    template <typename... Fns>
+    s7_function _make_overload(s7_scheme *sc, std::string_view name, Fns&&... fns)
+    {
+        constexpr auto NumFns = sizeof...(Fns);
+        auto set = [&]<typename F>(F &&fn) {
+            using L = std::remove_cvref_t<F>;
+            detail::LambdaTable<L>::lambda = fn;
+            detail::LambdaTable<L>::name.insert_or_assign(reinterpret_cast<uintptr_t>(sc), name.data());
+        };
+        (set(fns), ...);
+
+        return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
+            auto length = s7_list_length(sc, args);
+            auto results = std::array<s7_pointer, NumFns> {
+                detail::match_fn<Fns>(sc, args, length)...
+            };
+
+            auto it = std::find_if(results.begin(), results.end(),
+                [](s7_pointer p) { return p != nullptr; });
+            if (it != results.end()) {
+                return *it;
+            }
+
+            std::vector<s7_pointer> types;
+            for (auto arg : s7::List(args)) {
+                types.push_back(s7_make_symbol(sc, scheme_type_to_string(detail::type_of(sc, arg)).data()));
+            }
+            auto str = std::string("arglist ~a doesn't match any signature for this function\n"
+                                   ";valid signatures:");
+            for (auto i = 0u; i < NumFns; i++) {
+                str += "\n;~a";
+            }
+            auto msg = detail::from(sc, str);
+            return s7_error(sc, s7_make_symbol(sc, "no-overload-match"), s7_list_nl(sc,
+                sizeof...(Fns) + 2,
+                msg,
+                s7_array_to_list(sc, types.size(), types.data()),
+                detail::make_signature(sc, &Fns::operator())...,
+                s7_nil(sc)
+            ));
+        };
+    }
+
+    Function make_function(s7_scheme *sc, std::string_view name, std::string_view doc, s7_function fn, FunctionOpts opts)
+    {
+        auto _name = s7_string(s7_make_semipermanent_string(sc, name.data()));
+        auto make = opts.unsafe_arglist || opts.unsafe_body
+            ? s7_make_function
+            : s7_make_safe_function;
+        return Function(make(sc, _name, fn, 0, 0, true, doc.data()));
+    }
+
+    template <typename F>
+    Function make_function(s7_scheme *sc, std::string_view name, std::string_view doc, F &&func, FunctionOpts)
+    {
+        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        auto _name = s7_string(s7_make_semipermanent_string(sc, name.data()));
+        auto f = detail::make_s7_function(sc, _name, func);
+        auto sig = make_signature(sc, func);
+        return Function(s7_make_typed_function(sc, _name, f, NumArgs, 0, false, doc.data(), sig));
+    }
+
+    template <typename... Fns>
+    Function make_function(s7_scheme *sc, std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts)
+    {
+        auto f = std::apply([&]<typename ...F>(F &&...fns) {
+            return detail::_make_overload(sc, name, detail::as_lambda(fns)...);
+        }, overload.fns);
+        auto _name = s7_string(s7_make_semipermanent_string(sc, name.data()));
+        auto make = opts.unsafe_arglist || opts.unsafe_body
+            ? s7_make_function
+            : s7_make_safe_function;
+        constexpr auto has_varargs = std::apply([&]<typename...F>(F &&...fs) {
+            return (function_has_varargs(fs) || ...);
+        }, overload.fns);
+        if constexpr(has_varargs) {
+            constexpr auto MinArgs = detail::min_arity<Fns...>();
+            return Function(make(sc, _name, f, MinArgs, 0, true, doc.data()));
+        } else {
+            constexpr auto MaxArgs = detail::max_arity<Fns...>();
+            constexpr auto MinArgs = detail::min_arity<Fns...>();
+            return Function(make(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data()));
+        }
+    }
 } // namespace detail
 
 namespace errors {
@@ -758,11 +879,6 @@ struct WrongArgsNumber {
 
 } // errors
 
-struct FunctionOpts {
-    bool unsafe_body = false;
-    bool unsafe_arglist = false;
-};
-
 enum class Op {
     Equal, Equivalent, Copy, Fill, Reverse, GcMark, GcFree,
     Length, ToString, ToList, Ref, Set,
@@ -781,78 +897,68 @@ constexpr std::string_view method_op_fn()
     if constexpr(op == MethodOp::Div) { return "/"; }
 }
 
-template <typename... Fns>
-struct Overload {
-    std::tuple<Fns...> fns;
-    explicit Overload(Fns&&... fns) : fns(fns...) {}
-};
-
-template <typename... Fns>
-struct Constructors {
-    std::string_view name = "";
-    Overload<Fns...> overload;
-    explicit Constructors(Fns&&... fns) : name(""), overload(std::forward<Fns>(fns)...) {}
-    explicit Constructors(std::string_view name, Fns&&... fns) : name(name), overload(std::forward<Fns>(fns)...) {}
-};
-
-template <>
-struct Constructors<> {
-    std::string_view name = "";
-    Constructors() = default;
-    explicit Constructors(std::string_view name) : name(name) {}
-};
-
 // implementation taken from https://github.com/ThePhD/sol2/blob/develop/include/sol/resolve.hpp
 // and kept intentionally simple (you shouldn't need to use these except for cases like operators)
 template <typename Sig>             inline constexpr Sig    *resolve(Sig    *f) { return f; }
 template <typename Sig, typename C> inline constexpr Sig C::*resolve(Sig C::*f) { return f; }
 
+class Let {
+    s7_scheme *sc;
+    s7_pointer let;
+
+public:
+    explicit Let(s7_scheme *sc, s7_pointer let) : sc(sc), let(let) {}
+
+    s7_pointer ptr() const { return let; }
+
+    template <typename T> s7_pointer define(std::string_view name, const T &value, std::string_view doc = "");
+    template <typename T> s7_pointer define(std::string_view name, T &&value, std::string_view doc = "");
+
+    template <typename T>
+    s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
+    {
+        auto sym = define(name, value, doc);
+        s7_set_immutable(sc, sym);
+        return sym;
+    }
+
+    template <typename T>
+    s7_pointer define_const(std::string_view name, T &&value, std::string_view doc = "")
+    {
+        auto sym = define(name, std::move(value), doc);
+        s7_set_immutable(sc, sym);
+        return sym;
+    }
+
+    Variable operator[](std::string_view name);
+
+    List to_list() const { return List(s7_let_to_list(sc, let)); }
+};
+
+template <typename T>
+s7_pointer Let::define(std::string_view name, const T &value, std::string_view doc)
+{
+    auto object = detail::from(sc, value);
+    auto sym = s7_make_symbol(sc, name.data());
+    s7_define(sc, let, sym, object);
+    s7_set_documentation(sc, object, doc.data());
+    return sym;
+}
+
+template <typename T>
+s7_pointer Let::define(std::string_view name, T &&value, std::string_view doc)
+{
+    auto object = detail::from(sc, std::move(value));
+    auto sym = s7_make_symbol(sc, name.data());
+    s7_define(sc, let, sym, object);
+    s7_set_documentation(sc, object, doc.data());
+    return sym;
+}
+
 class Scheme {
     s7_scheme *sc;
     // NOTE: any following field can't be accessed inside non-capturing lambdas
     std::unordered_set<MethodOp> substitured_ops;
-
-    template <typename... Fns>
-    s7_function _make_overload(std::string_view name, Fns&&... fns)
-    {
-        constexpr auto NumFns = sizeof...(Fns);
-        auto set = [&]<typename F>(F &&fn) {
-            using L = std::remove_cvref_t<F>;
-            detail::LambdaTable<L>::lambda = fn;
-            detail::LambdaTable<L>::name.insert_or_assign(reinterpret_cast<uintptr_t>(sc), name.data());
-        };
-        (set(fns), ...);
-
-        return [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
-            auto &scheme = *reinterpret_cast<Scheme *>(&sc);
-            auto length = s7_list_length(sc, args);
-            auto results = std::array<s7_pointer, NumFns> {
-                detail::match_fn<Fns>(sc, args, length)...
-            };
-
-            auto it = std::find_if(results.begin(), results.end(),
-                [](s7_pointer p) { return p != nullptr; });
-            if (it != results.end()) {
-                return *it;
-            }
-
-            std::vector<s7_pointer> types;
-            for (auto arg : s7::List(args)) {
-                types.push_back(s7_make_symbol(sc, scheme_type_to_string(scheme.type_of(arg)).data()));
-            }
-            auto str = std::string("arglist ~a doesn't match any signature for this function\n"
-                                   ";valid signatures:");
-            for (auto i = 0u; i < NumFns; i++) {
-                str += "\n;~a";
-            }
-            auto msg = scheme.from(str);
-            return s7_error(sc, s7_make_symbol(sc, "no-overload-match"), scheme.list(
-                msg,
-                s7_array_to_list(sc, types.size(), types.data()),
-                scheme.make_signature(&Fns::operator())...
-            ).ptr());
-        };
-    }
 
     template <MethodOp op>
     auto make_method_op_function()
@@ -1126,17 +1232,9 @@ public:
 
     /* signatures */
     template <typename F>
-    s7_pointer make_signature(F &&)
+    s7_pointer make_signature(F &&f)
     {
-        using R = typename FunctionTraits<F>::ReturnType;
-        constexpr auto Arity = FunctionTraits<F>::arity;
-        return FunctionTraits<F>::call_with_args([&]<typename... Args>() {
-            if constexpr(function_has_varargs<F>()) {
-                return s7_make_circular_signature(sc, Arity, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-            } else {
-                return s7_make_signature(sc, Arity + 1, type_is_fn<R, true>(), type_is_fn<Args>()...);
-            }
-        });
+        return detail::make_signature(sc, f);
     }
 
     /* calling functions */
@@ -1191,7 +1289,7 @@ public:
     s7_pointer define_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
     {
         auto f = std::apply([&]<typename ...F>(F &&...fns) {
-            return _make_overload(name, detail::as_lambda(fns)...);
+            return detail::_make_overload(sc, name, detail::as_lambda(fns)...);
         }, overload.fns);
         auto _name = s7_string(save_string(name));
         auto define = opts.unsafe_arglist || opts.unsafe_body
@@ -1239,46 +1337,10 @@ public:
         s7_define_macro(sc, _name, f, NumArgs, 0, false, doc.data());
     }
 
-    Function make_function(std::string_view name, std::string_view doc, s7_function fn, FunctionOpts opts = {})
-    {
-        auto _name = s7_string(save_string(name));
-        auto make = opts.unsafe_arglist || opts.unsafe_body
-            ? s7_make_function
-            : s7_make_safe_function;
-        return Function(make(sc, _name, fn, 0, 0, true, doc.data()));
-    }
-
     template <typename F>
-    Function make_function(std::string_view name, std::string_view doc, F &&func)
+    Function make_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
     {
-        constexpr auto NumArgs = FunctionTraits<F>::arity;
-        auto _name = s7_string(save_string(name));
-        auto f = detail::make_s7_function(sc, _name, func);
-        auto sig = make_signature(func);
-        return Function(s7_make_typed_function(sc, _name, f, NumArgs, 0, false, doc.data(), sig));
-    }
-
-    template <typename... Fns>
-    Function make_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
-    {
-        auto f = std::apply([&]<typename ...F>(F &&...fns) {
-            return _make_overload(name, detail::as_lambda(fns)...);
-        }, overload.fns);
-        auto _name = s7_string(save_string(name));
-        auto make = opts.unsafe_arglist || opts.unsafe_body
-            ? s7_make_function
-            : s7_make_safe_function;
-        constexpr auto has_varargs = std::apply([&]<typename...F>(F &&...fs) {
-            return (function_has_varargs(fs) || ...);
-        }, overload.fns);
-        if constexpr(has_varargs) {
-            constexpr auto MinArgs = detail::min_arity<Fns...>();
-            return Function(make(sc, _name, f, MinArgs, 0, true, doc.data()));
-        } else {
-            constexpr auto MaxArgs = detail::max_arity<Fns...>();
-            constexpr auto MinArgs = detail::min_arity<Fns...>();
-            return Function(make(sc, _name, f, MinArgs, MaxArgs - MinArgs, false, doc.data()));
-        }
+        return detail::make_function(sc, name, doc, std::move(func), opts);
     }
 
     Function make_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
@@ -1511,11 +1573,7 @@ public:
     template <typename T, bool OutputType = false>
     s7_pointer type_is_fn()
     {
-        if constexpr(std::is_same_v<T, s7_pointer>) { return s7_t(sc); }
-        if constexpr(std::is_same_v<T, Values>) { return sym("values"); }
-        if constexpr(is_varargs_v<T>) { return type_is_fn<typename T::Type, OutputType>(); }
-        auto s = std::string(type_to_string<T, OutputType>()) + "?";
-        return sym(s.c_str());
+        return detail::type_is_fn<T, OutputType>(sc);
     }
 
     /* utilities */
