@@ -1101,6 +1101,31 @@ class Scheme {
         }
     }
 
+    using InputFn  = s7_pointer (*)(s7_scheme *sc, s7_read_t read_choice, s7_pointer port);
+    using OutputFn = void (*)(s7_scheme *sc, uint8_t c, s7_pointer port);
+
+    InputFn make_input_fn(auto &&fn)
+    {
+        auto lambda = detail::as_lambda(fn);
+        using L = std::remove_cvref_t<decltype(lambda)>;
+        detail::set_lambda<L>(sc, std::move(lambda), "an input function");
+        return [](s7_scheme *sc, s7_read_t read_choice, s7_pointer port) -> s7_pointer {
+            auto &fn = detail::LambdaTable<L>::lambda;
+            return fn(*reinterpret_cast<Scheme *>(&sc), InputPort(sc, port), read_choice);
+        };
+    }
+
+    OutputFn make_output_fn(auto &&fn)
+    {
+        auto lambda = detail::as_lambda(fn);
+        using L = std::remove_cvref_t<decltype(lambda)>;
+        detail::set_lambda<L>(sc, std::move(lambda), "an output function");
+        return [](s7_scheme *sc, uint8_t c, s7_pointer port) -> void {
+            auto &fn = detail::LambdaTable<L>::lambda;
+            fn(*reinterpret_cast<Scheme *>(&sc), OutputPort(sc, port), c);
+        };
+    }
+
 public:
     Scheme() : sc(s7_init()) {}
 
@@ -1551,21 +1576,19 @@ public:
     InputPort  open_string(std::string_view string) { return InputPort( sc, s7_open_input_string( sc, string.data())); }
     OutputPort open_string()                        { return OutputPort(sc, s7_open_output_string(sc)); }
 
-    // InputPort open_input_function( auto &&fn) { return s7_open_input_function( sc, make_input_fn(fn)); }
-    // InputPort open_output_function(auto &&fn) { return s7_open_output_function(sc, make_output_fn(fn)); }
+    InputPort  open_input_function( auto &&fn) { return  InputPort(sc, s7_open_input_function( sc, make_input_fn(std::move(fn)))); }
+    OutputPort open_output_function(auto &&fn) { return OutputPort(sc, s7_open_output_function(sc, make_output_fn(std::move(fn)))); }
 
     InputPort current_input_port()                         { return InputPort( sc, s7_current_input_port(sc)); }
     InputPort set_current_input_port(InputPort p)          { return InputPort( sc, s7_set_current_input_port(sc, p.ptr())); }
     InputPort set_current_input_port(std::string_view str) { return set_current_input_port(open_string(str)); }
-    // InputPort set_current_input_port(auto &&fn)            { return set_current_input_port(open_function(std::move(fn))); }
+    InputPort set_current_input_port(auto &&fn)            { return set_current_input_port(open_input_function(std::move(fn))); }
     OutputPort current_output_port()                       { return OutputPort(sc, s7_current_output_port(sc)); }
     OutputPort set_current_output_port(OutputPort p)       { return OutputPort(sc, s7_set_current_output_port(sc, p.ptr())); }
-    OutputPort set_current_output_port()                   { return set_current_output_port(open_string()); }
-    // OutputPort set_current_output_port(auto &&fn)          { return set_current_output_port(open_function(std::move(fn))); }
+    OutputPort set_current_output_port(auto &&fn)          { return set_current_output_port(open_output_function(std::move(fn))); }
     OutputPort current_error_port()                        { return OutputPort(sc, s7_current_error_port(sc)); }
     OutputPort set_current_error_port(OutputPort p)        { return OutputPort(sc, s7_set_current_error_port(sc, p.ptr())); }
-    OutputPort set_current_error_port()                    { return set_current_error_port(open_string()); }
-    // OutputPort set_current_error_port(auto &&fn)           { return set_current_error_port(open_function(std::move(fn))); }
+    OutputPort set_current_error_port(auto &&fn)           { return set_current_error_port(open_output_function(std::move(fn))); }
 
     /* utilities */
     s7_pointer save_string(std::string_view s)

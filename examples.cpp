@@ -109,24 +109,24 @@ void example_listener_dax()
 }
 
 // Redirect output (and input) to a C procedure
-// (currently this example can't be fully done due to missing support for ports
-// that said, this example does at least show how to mix c api function with the
-// c++ class)
 void example_ports_redirect()
 {
     s7::Scheme scheme;
-    scheme.set_current_output_port(s7::OutputPort(scheme.ptr(),
-        s7_open_output_function(scheme.ptr(), [](s7_scheme *, uint8_t c, s7_pointer /* port */) {
-            fprintf(stderr, "[%c] ", c);
-        })
-    ));
-    scheme["io-port"] = s7_open_input_function(scheme.ptr(),
-        [](s7_scheme *sc, s7_read_t /*peek*/, s7_pointer /*port*/) -> s7_pointer {
-            auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);
-            return scheme.from((char) fgetc(stdin));
+    scheme.set_current_output_port([](s7::Scheme &, s7::OutputPort, uint8_t c) {
+        fprintf(stderr, "[%c] ", c);
+    });
+    scheme["io-port"] = scheme.open_input_function([](s7::Scheme &scheme, s7::InputPort /*port*/, s7_read_t /*peek*/) -> s7_pointer {
+        return scheme.from((char) fgetc(stdin));
+    });
+    for (;;) {
+        printf("> ");
+        char buffer[512];
+        fgets(buffer, sizeof(buffer), stdin);
+        if (buffer[0] != '\n' || strlen(buffer) > 1) {
+            scheme.eval(std::format("(write {})", buffer));
         }
-    );
-    scheme.repl();
+        printf("\n");
+    }
 }
 
 // Extend a built-in operator ("+" in this case)
@@ -287,11 +287,11 @@ void example_namespace(int argc, char *argv[])
 void example_handle_errors()
 {
     s7::Scheme scheme;
-    bool with_error_hook = true;
     scheme.define_function("error-handler", "out error handler", [](std::string_view error) -> bool {
         printf("error: %s\n", error.data());
         return false;
     });
+    bool with_error_hook = false;
     if (with_error_hook) {
         scheme.eval(R"(
             (set! (hook-functions *error-hook*)
@@ -307,9 +307,9 @@ void example_handle_errors()
         fgets(buffer, 512, stdin);
         if (buffer[0] != '\n' || strlen(buffer) > 1) {
             /* trap error messages */
-            auto old_port = s7_set_current_error_port(scheme.ptr(), s7_open_output_string(scheme.ptr()));
+            auto old_port = scheme.set_current_error_port(scheme.open_string());
             s7_int gc_loc = -1;
-            if (old_port != scheme.nil()) {
+            if (old_port.ptr() != scheme.nil()) {
                 gc_loc = scheme.protect(old_port);
             }
 
@@ -320,14 +320,14 @@ void example_handle_errors()
             printf("{%s}", scheme.to_string(result).data());
 
             /* look for error messages */
-            auto errmsg = s7_get_output_string(scheme.ptr(), s7_current_error_port(scheme.ptr()));
+            auto errmsg = scheme.current_error_port().get_string();
 
             /* if we got something, wrap it in "[]" */
-            if (errmsg && *errmsg) {
-                printf("[%s]", errmsg);
+            if (!errmsg.empty()) {
+                printf("[%s]", errmsg.data());
             }
 
-            s7_close_output_port(scheme.ptr(), s7_current_error_port(scheme.ptr()));
+            scheme.current_error_port().close();
             if (gc_loc != -1) {
                 scheme.unprotect_at(gc_loc);
             }
@@ -418,8 +418,8 @@ int main(int argc, char *argv[])
     // example_generic_function();
     // example_signals_continuations();
     // example_notification();
-    example_namespace(argc, argv);
-    // example_handle_errors();
+    // example_namespace(argc, argv);
+    example_handle_errors();
     // example_hooks();
     // example_load_library
 }
