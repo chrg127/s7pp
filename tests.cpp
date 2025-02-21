@@ -95,9 +95,9 @@ void test_define_function()
 {
     s7::Scheme scheme;
     scheme.define_function("add-double", "doc", add_double);
-    // scheme.define_function("add-int", "doc", add_int);
-    // scheme.define_function("print-append", "doc", print_append);
-    // scheme.define_function("find-index", "doc", find);
+    scheme.define_function("add-int", "doc", add_int);
+    scheme.define_function("print-append", "doc", print_append);
+    scheme.define_function("find-index", "doc", find);
     scheme.repl();
 }
 
@@ -263,17 +263,25 @@ void test_type_of()
     scheme.repl();
 }
 
+void test_complex()
+{
+    s7::Scheme scheme;
+    scheme.define_function("z+", "add 1 to complex", [](s7_complex z) { return s7_complex(z.real() + 1, z.imag()); });
+    scheme.repl();
+}
+
 int main()
 {
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
-    // test_define_function();
-    test_set();
+    test_define_function();
+    // test_set();
     // test_v2();
     // test_star_fns();
     // test_varargs();
     // test_sig();
     // test_type_of();
+    // test_complex();
 }
 

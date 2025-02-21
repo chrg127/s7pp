@@ -271,6 +271,7 @@ namespace detail {
         else if constexpr(std::is_same_v<T, bool>)                  { return "boolean";     }
         else if constexpr(std::is_same_v<T, s7_int>)                { return "integer";     }
         else if constexpr(std::is_same_v<T, double>)                { return "real";        }
+        else if constexpr(std::is_same_v<T, s7_complex>)            { return "complex";     }
         else if constexpr(std::is_same_v<T, const char *>
                        || std::is_same_v<T, std::string_view>)      { return "string";      }
         else if constexpr(std::is_same_v<T, unsigned char>)         { return "character";   }
@@ -278,6 +279,7 @@ namespace detail {
         else if constexpr(std::is_same_v<T, std::span<s7_int>>)     { return "int-vector";   }
         else if constexpr(std::is_same_v<T, std::span<double>>)     { return "float-vector"; }
         else if constexpr(std::is_same_v<T, std::span<uint8_t>>)    { return "byte-vector";  }
+        else if constexpr(std::is_same_v<T, std::span<s7_complex>>) { return "complex-vector"; }
         else if constexpr(std::is_pointer_v<T>)                     { return "c-pointer";    }
         else if constexpr(std::is_same_v<T, List>)                  { return "list";        }
         else if constexpr(std::is_same_v<T, Function>)              { return "procedure";   }
@@ -296,6 +298,7 @@ namespace detail {
                          (std::is_same_v<T, std::vector<double>>
                        || std::is_same_v<T, std::span<float>>  || std::is_same_v<T, std::vector<float>>))   { return "float-vector"; }
         else if constexpr(Output && std::is_same_v<T, std::vector<uint8_t>>)                                { return "byte-vector";  }
+        else if constexpr(Output && std::is_same_v<T, std::vector<s7_complex>>)                             { return "complex-vector"; }
         else if constexpr(Output && std::is_same_v<T, Values>)                                              { return "values";      }
         // anything else
         else                                                                                                { return detail::get_type_name<T>(sc); }
@@ -308,6 +311,7 @@ namespace detail {
         else if constexpr(std::is_same_v<T, bool>)                  { return s7_is_boolean(p);      }
         else if constexpr(std::is_same_v<T, s7_int>)                { return s7_is_integer(p);      }
         else if constexpr(std::is_same_v<T, double>)                { return s7_is_real(p);         }
+        else if constexpr(std::is_same_v<T, s7_complex>)            { return s7_is_complex(p);      }
         else if constexpr(std::is_same_v<T, const char *>
                        || std::is_same_v<T, std::string_view>)      { return s7_is_string(p);       }
         else if constexpr(std::is_same_v<T, unsigned char>)         { return s7_is_character(p);    }
@@ -336,6 +340,7 @@ namespace detail {
         else if constexpr(std::is_same_v<T, bool>)                  { return s7_boolean(sc, p);                                                 }
         else if constexpr(std::is_same_v<T, s7_int>)                { return s7_integer(p);                                                     }
         else if constexpr(std::is_same_v<T, double>)                { return s7_real(p);                                                        }
+        else if constexpr(std::is_same_v<T, s7_complex>)            { return s7_complex(s7_real_part(p), s7_imag_part(p));                      }
         else if constexpr(std::is_same_v<T, const char *>)          { return s7_string(p);                                                      }
         else if constexpr(std::is_same_v<T, std::string_view>)      { return std::string_view(s7_string(p));                                    }
         else if constexpr(std::is_same_v<T, char>)                  { return static_cast<char>(s7_character(p));                                }
@@ -369,6 +374,7 @@ namespace detail {
         else if constexpr(std::is_same_v<Type, s7_int> || std::is_same_v<Type, int>
                        || std::is_same_v<Type, short> || std::is_same_v<Type, long>)             { return s7_make_integer(sc, x);                              }
         else if constexpr(std::is_same_v<Type, double> || std::is_same_v<Type, float>)           { return s7_make_real(sc, x);                                 }
+        else if constexpr(std::is_same_v<Type, s7_complex>)                                      { return s7_make_complex(sc, x.real(), x.imag());             }
         else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, char *>)       { return s7_make_string(sc, x);                               }
         else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, const char *>) { return s7_make_string(sc, x);                               }
         else if constexpr(std::is_same_v<Type, std::string>)                                     { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
@@ -427,6 +433,7 @@ namespace detail {
         else if constexpr(std::is_same_v<Type, s7_int> || std::is_same_v<Type, int>
                        || std::is_same_v<Type, short> || std::is_same_v<Type, long>)             { return s7_make_integer(sc, x);                              }
         else if constexpr(std::is_same_v<Type, double> || std::is_same_v<Type, float>)           { return s7_make_real(sc, x);                                 }
+        else if constexpr(std::is_same_v<Type, s7_complex>)                                      { return s7_make_complex(sc, x.real(), x.imag());             }
         else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, char *>)       { return s7_make_string(sc, x);                               }
         else if constexpr(std::is_same_v<std::remove_cvref_t<std::decay_t<Type>>, const char *>) { return s7_make_string(sc, x);                               }
         else if constexpr(std::is_same_v<Type, std::string>)                                     { return s7_make_string_with_length(sc, x.c_str(), x.size()); }
@@ -1107,6 +1114,7 @@ public:
     template <typename T> T to(s7_pointer p)            { return s7::detail::to<T>(sc, p); }
     template <typename T> s7_pointer from(const T &obj) { return s7::detail::from(sc, obj); }
     template <typename T> s7_pointer from(T &&obj)      { return s7::detail::from(sc, std::move(obj)); }
+    bool is_number(s7_pointer p) { return s7_is_number(p); }
 
     template <typename T>
     std::optional<T> to_opt(s7_pointer p)
