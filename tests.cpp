@@ -152,9 +152,10 @@ void test_set()
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
         s7::Constructors(
-            [&]() { return Set(scheme); },
+            [&]() { printf("ctor1\n"); return Set(scheme); },
             [&](s7::VarArgs<s7_pointer> args)
             {
+                printf("ctor2\n"); 
                 auto s = Set(scheme);
                 for (auto p : args) {
                     s.add(p);
@@ -268,8 +269,8 @@ int main()
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    // test_set();
-    test_v2();
+    test_set();
+    // test_v2();
     // test_star_fns();
     // test_varargs();
     // test_sig();
