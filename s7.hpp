@@ -1475,11 +1475,15 @@ public:
         return detail::type_to_string<T, OutputType>(sc);
     }
 
-    template <typename T, bool OutputType = false>
-    s7_pointer type_is_fn()
-    {
-        return detail::type_is_fn<T, OutputType>(sc);
-    }
+    /* let creation */
+    Let rootlet() { return Let(sc, s7_rootlet(sc)); }
+    Let curlet()  { return Let(sc, s7_curlet(sc)); }
+    Let new_let() { return Let(sc, s7_sublet(sc, s7_curlet(sc), s7_nil(sc))); }
+    Let new_let(List bindings) { return Let(sc, s7_sublet(sc, s7_curlet(sc), bindings.ptr())); }
+    Let new_let_from(Let sub) { return Let(sc, s7_sublet(sc, sub.ptr(), s7_nil(sc))); }
+    Let new_let_from(Let sub, List bindings) { return Let(sc, s7_sublet(sc, sub.ptr(), bindings.ptr())); }
+    Let new_empty_let() { return Let(sc, s7_inlet(sc, s7_nil(sc))); }
+    Let new_empty_let(List bindings) { return Let(sc, s7_inlet(sc, bindings.ptr())); }
 
     /* utilities */
     s7_pointer save_string(std::string_view s)
