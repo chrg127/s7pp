@@ -115,11 +115,11 @@ void example_listener_dax()
 void example_ports_redirect()
 {
     s7::Scheme scheme;
-    s7_set_current_output_port(scheme.ptr(),
+    scheme.set_current_output_port(s7::OutputPort(scheme.ptr(),
         s7_open_output_function(scheme.ptr(), [](s7_scheme *, uint8_t c, s7_pointer /* port */) {
             fprintf(stderr, "[%c] ", c);
         })
-    );
+    ));
     scheme["io-port"] = s7_open_input_function(scheme.ptr(),
         [](s7_scheme *sc, s7_read_t /*peek*/, s7_pointer /*port*/) -> s7_pointer {
             auto &scheme = *reinterpret_cast<s7::Scheme *>(&sc);

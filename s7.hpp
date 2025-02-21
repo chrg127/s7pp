@@ -104,6 +104,45 @@ public:
 
 class Let;
 
+class InputPort {
+    s7_scheme *sc;
+    s7_pointer p;
+public:
+    explicit InputPort(s7_scheme *sc, s7_pointer p) : sc(sc), p(p) {}
+    s7_pointer ptr() const { return p; }
+    std::string_view filename() const { return s7_port_filename(sc, p); }
+    s7_int line() const { return s7_port_line_number(sc, p); }
+    s7_pointer read_char() { return s7_read_char(sc, p); }
+    s7_pointer peek_char() { return s7_peek_char(sc, p); }
+    s7_pointer read() { return s7_read(sc, p); }
+    void close() { s7_close_input_port(sc, p); }
+};
+
+enum class InputMode {
+    Read,
+};
+
+class OutputPort {
+    s7_scheme *sc;
+    s7_pointer p;
+public:
+    explicit OutputPort(s7_scheme *sc, s7_pointer p) : sc(sc), p(p) {}
+    s7_pointer ptr() const { return p; }
+    std::string_view filename() const { return s7_port_filename(sc, p); }
+    s7_int line() const { return s7_port_line_number(sc, p); }
+    std::string_view get_string() const { return s7_get_output_string(sc, p); }
+    void newline() { s7_newline(sc, p); }
+    s7_pointer write_char(s7_pointer c) { return s7_write_char(sc, c, p); }
+    s7_pointer write(s7_pointer obj) { return s7_write(sc, obj, p); }
+    s7_pointer display(s7_pointer obj) { return s7_display(sc, obj, p); }
+    bool flush() { return s7_flush_output_port(sc, p); }
+    void close() { s7_close_output_port(sc, p); }
+};
+
+enum class OutputMode {
+    Write, Alter
+};
+
 struct FunctionOpts {
     bool unsafe_body = false;
     bool unsafe_arglist = false;
@@ -284,6 +323,8 @@ namespace detail {
         else if constexpr(std::is_same_v<T, List>)                  { return "list";        }
         else if constexpr(std::is_same_v<T, Function>)              { return "procedure";   }
         else if constexpr(std::is_same_v<T, Let>)                   { return "let"; }
+        else if constexpr(std::is_same_v<T, InputPort>)             { return "input-port"; }
+        else if constexpr(std::is_same_v<T, OutputPort>)            { return "output-port"; }
         // allowed in to(), but with truncation
         else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) { return "integer"; }
         else if constexpr(std::is_same_v<T, float>)                                                      { return "real"; }
@@ -322,7 +363,9 @@ namespace detail {
         else if constexpr(std::is_pointer_v<T>)                     { return s7_is_c_pointer(p);    }
         else if constexpr(std::is_same_v<T, List>)                  { return s7_is_pair(p);         }
         else if constexpr(std::is_same_v<T, Function>)              { return s7_is_procedure(p);    }
-        else if constexpr(std::is_same_v<T, Let>)                   { return s7_is_let(p);    }
+        else if constexpr(std::is_same_v<T, Let>)                   { return s7_is_let(p);          }
+        else if constexpr(std::is_same_v<T, InputPort>)             { return s7_is_input_port(sc, p);  }
+        else if constexpr(std::is_same_v<T, OutputPort>)            { return s7_is_output_port(sc, p); }
         // allowed in to() with truncation
         else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) { return s7_is_integer(p); }
         else if constexpr(std::is_same_v<T, float>) { return s7_is_real(p); }
@@ -352,6 +395,8 @@ namespace detail {
         else if constexpr(std::is_same_v<T, List>)                  { return List(p);                                                           }
         else if constexpr(std::is_same_v<T, Function>)              { return Function(p);                                                       }
         else if constexpr(std::is_same_v<T, Let>)                   { return Let(sc, p);                                                        }
+        else if constexpr(std::is_same_v<T, InputPort>)             { return InputPort(sc, p);   }
+        else if constexpr(std::is_same_v<T, OutputPort>)            { return OutputPort(sc, p);   }
         else if constexpr(std::is_same_v<T, int> || std::is_same_v<T, short> || std::is_same_v<T, long>) {
             WARN_PRINT(";truncanting s7_int (%zu bytes) to %zu bytes\n", sizeof(s7_int), sizeof(T));
             return static_cast<T>(s7_integer(p));
@@ -384,6 +429,8 @@ namespace detail {
         else if constexpr(std::is_same_v<Type, Function>)                                        { return x.ptr();                                             }
         else if constexpr(std::is_same_v<Type, Let>)                                             { return x.ptr();                                             }
         else if constexpr(std::is_same_v<Type, Values>)                                          { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, InputPort>)                                       { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, OutputPort>)                                      { return x.ptr();                                             }
         else if constexpr(std::is_same_v<Type, std::span<s7_pointer>> || std::is_same_v<Type, std::vector<s7_pointer>>) {
             auto vec = s7_make_vector(sc, x.size());
             for (size_t i = 0; i < x.size(); i++) {
@@ -443,6 +490,8 @@ namespace detail {
         else if constexpr(std::is_same_v<Type, Function>)                                        { return x.ptr();                                             }
         else if constexpr(std::is_same_v<Type, Let>)                                             { return x.ptr();                                             }
         else if constexpr(std::is_same_v<Type, Values>)                                          { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, InputPort>)                                       { return x.ptr();                                             }
+        else if constexpr(std::is_same_v<Type, OutputPort>)                                      { return x.ptr();                                             }
         else if constexpr(std::is_same_v<Type, std::span<s7_pointer>> || std::is_same_v<Type, std::vector<s7_pointer>>) {
             auto vec = s7_make_vector(sc, x.size());
             for (size_t i = 0; i < x.size(); i++) {
@@ -489,6 +538,9 @@ namespace detail {
     constexpr auto vmax(auto a, auto &&...args) { return std::max(a, vmin(args...)); }
     template <typename... Fns> constexpr auto max_arity() { return vmax(FunctionTraits<Fns>::arity...); }
     template <typename... Fns> constexpr auto min_arity() { return vmin(FunctionTraits<Fns>::arity...); }
+
+    const char *input_mode_to_string(InputMode m) { return m == InputMode::Read ? "r" : ""; }
+    const char *output_mode_to_string(OutputMode m) { return m == OutputMode::Write ? "w" : "a"; }
 } // namespace detail
 
 template <typename T>
@@ -1492,6 +1544,28 @@ public:
     Let new_let_from(Let sub, List bindings) { return Let(sc, s7_sublet(sc, sub.ptr(), bindings.ptr())); }
     Let new_empty_let() { return Let(sc, s7_inlet(sc, s7_nil(sc))); }
     Let new_empty_let(List bindings) { return Let(sc, s7_inlet(sc, bindings.ptr())); }
+
+    /* ports */
+    InputPort  open_file(std::string_view name,  InputMode mode) { return InputPort( sc, s7_open_input_file( sc, name.data(), detail::input_mode_to_string( mode))); }
+    OutputPort open_file(std::string_view name, OutputMode mode) { return OutputPort(sc, s7_open_output_file(sc, name.data(), detail::output_mode_to_string(mode))); }
+    InputPort  open_string(std::string_view string) { return InputPort( sc, s7_open_input_string( sc, string.data())); }
+    OutputPort open_string()                        { return OutputPort(sc, s7_open_output_string(sc)); }
+
+    // InputPort open_input_function( auto &&fn) { return s7_open_input_function( sc, make_input_fn(fn)); }
+    // InputPort open_output_function(auto &&fn) { return s7_open_output_function(sc, make_output_fn(fn)); }
+
+    InputPort current_input_port()                         { return InputPort( sc, s7_current_input_port(sc)); }
+    InputPort set_current_input_port(InputPort p)          { return InputPort( sc, s7_set_current_input_port(sc, p.ptr())); }
+    InputPort set_current_input_port(std::string_view str) { return set_current_input_port(open_string(str)); }
+    // InputPort set_current_input_port(auto &&fn)            { return set_current_input_port(open_function(std::move(fn))); }
+    OutputPort current_output_port()                       { return OutputPort(sc, s7_current_output_port(sc)); }
+    OutputPort set_current_output_port(OutputPort p)       { return OutputPort(sc, s7_set_current_output_port(sc, p.ptr())); }
+    OutputPort set_current_output_port()                   { return set_current_output_port(open_string()); }
+    // OutputPort set_current_output_port(auto &&fn)          { return set_current_output_port(open_function(std::move(fn))); }
+    OutputPort current_error_port()                        { return OutputPort(sc, s7_current_error_port(sc)); }
+    OutputPort set_current_error_port(OutputPort p)        { return OutputPort(sc, s7_set_current_error_port(sc, p.ptr())); }
+    OutputPort set_current_error_port()                    { return set_current_error_port(open_string()); }
+    // OutputPort set_current_error_port(auto &&fn)           { return set_current_error_port(open_function(std::move(fn))); }
 
     /* utilities */
     s7_pointer save_string(std::string_view s)
