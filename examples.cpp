@@ -275,7 +275,7 @@ void example_namespace(int argc, char *argv[])
 
     if (argc == 2) {
         fprintf(stderr, "load %s\n", argv[1]);
-        if (!s7_load(scheme.ptr(), argv[1])) {
+        if (!scheme.load(argv[1])) {
             fprintf(stderr, "can't find %s\n", argv[1]);
         }
     } else {

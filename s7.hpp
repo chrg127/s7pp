@@ -1142,11 +1142,14 @@ public:
 
     s7_scheme *ptr() { return sc; }
 
-    /* eval/repl stuff */
+    /* eval, load, repl */
     s7_pointer eval(std::string_view code)
     {
         return s7_eval_c_string(sc, code.data());
     }
+
+    s7_pointer load(std::string_view filepath) { return s7_load(sc, filepath.data()); }
+    s7_pointer load_string(std::string_view string) { return s7_load_c_string(sc, string.data(), string.size()); }
 
     void repl(
         std::function<bool(std::string_view)> quit = [](std::string_view) { return false; },
