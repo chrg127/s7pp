@@ -1174,6 +1174,7 @@ public:
     }
 
     /* gc */
+    s7_pointer gc_on(bool on)                 { return s7_gc_on(sc, on); }
     s7_int protect(s7_pointer p)              { return s7_gc_protect(sc, p); }
     template <typename T> s7_int protect(T p) { return s7_gc_protect(sc, p.ptr()); }
     void unprotect_at(s7_int loc)             { s7_gc_unprotect_at(sc, loc); }
@@ -1192,6 +1193,8 @@ public:
     template <typename T> s7_pointer from(const T &obj) { return s7::detail::from(sc, obj); }
     template <typename T> s7_pointer from(T &&obj)      { return s7::detail::from(sc, std::move(obj)); }
     bool is_number(s7_pointer p) { return s7_is_number(p); }
+    bool is_equal(s7_pointer a, s7_pointer b) { return s7_is_equal(sc, a, b); }
+    bool is_equivalent(s7_pointer a, s7_pointer b) { return s7_is_equivalent(sc, a, b); }
 
     template <typename T>
     std::optional<T> to_opt(s7_pointer p)
@@ -1614,6 +1617,20 @@ public:
         }
         return Function(m);
     }
+
+    std::string_view stacktrace() { return to_string(s7_stacktrace(sc)); }
+
+    // probably worth noting: s7's history is reeeaaaally awkward. it's a circular list, yes, but it goes like this:
+    // (last first second third last ...)
+    // the only way to make any sense of it is 1) take the history's size; 2) walk it backwards using s7_list_ref().
+    // you also need to turn it on with a define too (#define WITH_HISTORY 1). set_history_enabled(true) doesn't work.
+    // (maybe i shouldn't provide this stuff if WITH_HISTORY isn't defined...)
+    // if you're making a repl (the only reason anyone would use s7's history...), you might as well make your own
+    // implementation, it's not that hard (especially if you're using C++).
+    bool history_enabled() { return s7_history_enabled(sc); }
+    bool set_history_enabled(bool enabled) { return s7_set_history_enabled(sc, enabled); }
+    List history() { return List(s7_history(sc)); }
+    s7_pointer add_history(s7_pointer entry) { return s7_add_to_history(sc, entry); }
 };
 
 class Variable {

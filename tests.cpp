@@ -270,12 +270,25 @@ void test_complex()
     scheme.repl();
 }
 
-int main()
+void test_history()
+{
+    s7::Scheme scheme;
+    scheme.set_history_enabled(true);
+    scheme.add_history(scheme.from(1));
+    scheme.add_history(scheme.from(2));
+    scheme.add_history(scheme.from(3));
+    auto histsize = scheme.to<s7_int>(s7_starlet_ref(scheme.ptr(), scheme.sym("history-size")));
+    for (auto i = histsize; i >= 0; i--) {
+        printf("%s\n", scheme.to_string(scheme.history()[i]).data());
+    }
+}
+
+int main(int argc, char *argv[])
 {
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
-    test_define_function();
+    // test_define_function();
     // test_set();
     // test_v2();
     // test_star_fns();
@@ -283,5 +296,6 @@ int main()
     // test_sig();
     // test_type_of();
     // test_complex();
+    test_history();
 }
 
