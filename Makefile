@@ -1,28 +1,23 @@
-CXXFLAGS := -std=c++20 -Wall -Wextra -pedantic -Wconversion -g
+CXXFLAGS := -std=c++20 -Wall -Wextra -pedantic -Wconversion -g -Iinclude -Is7
+# no -Wall -Wextra -pedantic for s7.c
+S7FLAGS := -std=c++20 -g
+outdir := build
 
-all: obj tests examples runfile
+all: $(outdir) $(outdir)/tests $(outdir)/examples $(outdir)/runfile
 
-tests: obj/tests.o obj/s7.o
-	g++ $(CXXFLAGS) $< obj/s7.o -o $@
+$(outdir):
+	mkdir -p $@
 
-examples: obj/examples.o obj/s7.o
-	g++ $(CXXFLAGS) $< obj/s7.o -o $@
+$(outdir)/%: $(outdir)/%.o $(outdir)/s7.o
+	g++ $(CXXFLAGS) $< $(outdir)/s7.o -o $@
 
-runfile: obj/runfile.o obj/s7.o
-	g++ $(CXXFLAGS) $< obj/s7.o -o $@
-
-obj/s7.o: s7/s7.c
-	g++ -std=c++20 -g -c $< -o $@
-#	g++ -std=c++20 -g -c $< -o $@
-
-obj/tests.o: tests.cpp s7.hpp
+$(outdir)/%.o: test/%.cpp include/s7.hpp include/function_traits.hpp
 	g++ $(CXXFLAGS) -c $< -o $@
 
-obj/examples.o: examples.cpp s7.hpp
-	g++ $(CXXFLAGS) -c $< -o $@
+$(outdir)/s7.o: s7/s7.c
+	g++ $(S7FLAGS) -g -c $< -o $@
 
-obj/runfile.o: runfile.cpp s7.hpp
-	g++ $(CXXFLAGS) -c $< -o $@
+.PHONY: clean
 
-obj:
-	mkdir -p obj
+clean:
+	rm -rf $(outdir) $(outdir)/tests* $(outdir)/examples* $(outdir)/unfile*
