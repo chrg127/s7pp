@@ -722,7 +722,9 @@ namespace detail {
 
     template <typename F> s7_pointer make_signature(s7_scheme *sc, F &&) { return make_signature<F>(sc); }
 
-    template <typename R, typename... Args>
+    struct NoVarArgs {};
+
+    template <typename VarArgsType, typename R, typename... Args>
     s7_pointer call_fn(s7_scheme *sc, s7_pointer args, auto &&fn, std::string_view name)
     {
         constexpr auto NumArgs = sizeof...(Args);
@@ -751,25 +753,32 @@ namespace detail {
 
         if constexpr(std::is_same_v<R, void>) {
             [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                fn(detail::to<Args>(sc, arr[Is])...);
+                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                    fn(detail::to<Args>(sc, arr[Is])...);
+                } else {
+                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
+                    fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                }
             }(std::make_index_sequence<NumArgs>());
             return s7_unspecified(sc);
         } else {
             return detail::from(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return fn(detail::to<Args>(sc, arr[Is])...);
+                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                    return fn(detail::to<Args>(sc, arr[Is])...);
+                } else {
+                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
+                    return fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                }
             }(std::make_index_sequence<NumArgs>()));
         }
     }
 
-    template <typename R, typename T>
-    s7_pointer call_varargs_fn(s7_scheme *sc, s7_pointer args, auto &&fn, std::string_view name)
+    template <typename... Args>
+    auto call_without_last_type_arg(auto &&fn)
     {
-        if constexpr(std::is_same_v<R, void>) {
-            fn(VarArgs<T>(sc, args, name));
-            return s7_unspecified(sc);
-        } else {
-            return detail::from(sc, fn(VarArgs<T>(sc, args, name)));
-        }
+        return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            return fn.template operator()<typename std::tuple_element<Is, std::tuple<Args...>>::type...>();
+        }(std::make_index_sequence<sizeof...(Args) - 1>());
     }
 
     template <typename F>
@@ -785,20 +794,28 @@ namespace detail {
                 using R = typename FunctionTraits<F>::ReturnType;
                 if constexpr(function_has_varargs<F>()) {
                     using LastArg = typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type;
-                    return call_varargs_fn<R, typename LastArg::Type>(sc, args, fn, name);
+                    return call_without_last_type_arg<Args...>([&]<typename... NewArgs>() {
+                        return call_fn<typename LastArg::Type, R, NewArgs...>(sc, args, fn, name);
+                    });
                 } else {
-                    return call_fn<R, Args...>(sc, args, fn, name);
+                    return call_fn<NoVarArgs, R, Args...>(sc, args, fn, name);
                 }
             });
         };
     }
 
-    template <typename R, typename... Args>
-    s7_pointer _match_fn(s7_scheme *sc, s7_pointer args, s7_int length, auto &&fn)
+    template <typename VarArgsType, typename R, typename... Args>
+    s7_pointer _match_fn(s7_scheme *sc, s7_pointer args, s7_int length, auto &&fn, std::string_view name)
     {
-        constexpr auto NumArgs = FunctionTraits<decltype(fn)>::arity;
-        if (length != NumArgs) {
-            return nullptr;
+        constexpr auto NumArgs = sizeof...(Args);
+        if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+            if (length != NumArgs) {
+                return nullptr;
+            }
+        } else {
+            if (size_t(length) < NumArgs) {
+                return nullptr;
+            }
         }
 
         auto arglist = s7::List(args);
@@ -808,7 +825,7 @@ namespace detail {
         }
 
         auto bools = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            return std::array<bool, NumArgs> { detail::is<Args>(sc, arr[Is])...  };
+            return std::array<bool, NumArgs> { detail::is<Args>(sc, arr[Is])... };
         }(std::make_index_sequence<NumArgs>());
         auto matches = std::find(bools.begin(), bools.end(), false) == bools.end();
         if (!matches) {
@@ -817,12 +834,22 @@ namespace detail {
 
         if constexpr(std::is_same_v<R, void>) {
             [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                fn(detail::to<Args>(sc, arr[Is])...);
+                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                    fn(detail::to<Args>(sc, arr[Is])...);
+                } else {
+                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
+                    fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                }
             }(std::make_index_sequence<NumArgs>());
             return s7_unspecified(sc);
         } else {
             return detail::from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return fn(detail::to<Args>(sc, arr[Is])...);
+                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                    return fn(detail::to<Args>(sc, arr[Is])...);
+                } else {
+                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
+                    return fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                }
             }(std::make_index_sequence<NumArgs>()));
         }
     }
@@ -834,9 +861,11 @@ namespace detail {
             using R = typename FunctionTraits<F>::ReturnType;
             if constexpr(function_has_varargs<F>()) {
                 using LastArg = typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type;
-                return call_varargs_fn<R, typename LastArg::Type>(sc, args, fn, name);
+                return call_without_last_type_arg<Args...>([&]<typename... NewArgs>() {
+                    return _match_fn<typename LastArg::Type, R, NewArgs...>(sc, args, length, fn, name);
+                });
             } else {
-                return _match_fn<R, Args...>(sc, args, length, fn);
+                return _match_fn<NoVarArgs, R, Args...>(sc, args, length, fn, name);
             }
         });
     }
@@ -901,11 +930,15 @@ namespace detail {
     template <typename F>
     Function make_function(s7_scheme *sc, std::string_view name, std::string_view doc, F &&func, FunctionOpts)
     {
-        constexpr auto NumArgs = FunctionTraits<F>::arity;
         auto _name = s7_string(s7_make_semipermanent_string(sc, name.data()));
         auto f = detail::make_s7_function(sc, _name, func);
         auto sig = make_signature(sc, func);
-        return Function(s7_make_typed_function(sc, _name, f, NumArgs, 0, false, doc.data(), sig));
+        if constexpr(function_has_varargs(func)) {
+            return Function(s7_make_typed_function(sc, _name, f, detail::FunctionTraits<F>::arity - 1, 0, true, doc.data(), sig));
+        } else {
+            constexpr auto NumArgs = detail::FunctionTraits<F>::arity;
+            return Function(s7_make_typed_function(sc, _name, f, NumArgs, 0, false, doc.data(), sig));
+        }
     }
 
     template <typename... Fns>
@@ -1389,7 +1422,7 @@ public:
                     :                                           s7_define_typed_function;
         auto sig = make_signature(func);
         if constexpr(function_has_varargs(func)) {
-            return define(sc, _name, f, 0, 0, true, doc.data(), sig);
+            return define(sc, _name, f, detail::FunctionTraits<F>::arity - 1, 0, true, doc.data(), sig);
         } else {
             constexpr auto NumArgs = detail::FunctionTraits<F>::arity;
             return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);

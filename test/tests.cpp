@@ -130,6 +130,13 @@ struct Set {
 
     s7_pointer add(s7_pointer p) { this->set.insert(p); return p; }
 
+    void add_all(s7::VarArgs<s7_pointer> ps)
+    {
+        for (auto p : ps) {
+            this->set.insert(p);
+        }
+    }
+
     std::size_t the_size() const { return 42; }
 };
 
@@ -150,23 +157,13 @@ void test_set()
 {
     s7::Scheme scheme;
     scheme.make_usertype<Set>("set",
-        s7::Constructors(
-            [&]() { printf("ctor1\n"); return Set(scheme); },
-            [&](s7::VarArgs<s7_pointer> args)
-            {
-                printf("ctor2\n"); 
-                auto s = Set(scheme);
-                for (auto p : args) {
-                    s.add(p);
-                }
-                return s;
-            }
-        ),
+        s7::Constructors([&]() { return Set(scheme); }),
         s7::Op::GcMark,   [&](const Set &s) { return s.gc_mark(scheme); },
         s7::Op::ToString, [&](const Set &s) { return s.to_string(scheme); },
         s7::Op::Length,   &Set::the_size
     );
-    scheme.define_function("set-add!", "(set-add! set value) adds value to set", &Set::add);
+    scheme.define_function("set-add!", "(set-add! set value) adds value to set",
+            s7::Overload(&Set::add, &Set::add_all));
     scheme.repl();
 }
 
@@ -229,14 +226,23 @@ void test_from()
 void test_varargs()
 {
     s7::Scheme scheme;
+
     scheme.define_function("add", "doc", [](s7::VarArgs<int> args) -> int {
         int sum = 0;
-        for (auto it = args.begin(); it != args.end(); ++it) {
-            auto arg = *it;
+        for (auto arg : args) {
             sum += arg;
         }
         return sum;
     });
+
+    scheme.define_function("add-with-init", "add but with an init value", [](s7_int init, s7::VarArgs<s7_int> args) -> s7_int {
+        printf("init = %lld\n", init);
+        for (auto v : args) {
+            init += v;
+        }
+        return init;
+    });
+
     scheme.repl();
 }
 
@@ -288,7 +294,7 @@ int main(int argc, char *argv[])
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    // test_set();
+    test_set();
     // test_v2();
     // test_star_fns();
     // test_varargs();
@@ -296,7 +302,7 @@ int main(int argc, char *argv[])
     // test_type_of();
     // test_complex();
     // test_history();
-    s7::Scheme scheme;
-    scheme.repl();
+    // s7::Scheme scheme;
+    // scheme.repl();
 }
 

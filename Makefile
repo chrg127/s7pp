@@ -1,17 +1,21 @@
+MAKEFLAGS += --no-builtin-rules
+.SUFFIXES:
+
 CXXFLAGS := -std=c++20 -Wall -Wextra -pedantic -Wconversion -g -Iinclude -Is7
 # no -Wall -Wextra -pedantic for s7.c
 S7FLAGS := -std=c++20 -g
 outdir := build
 
-all: $(outdir) $(outdir)/tests $(outdir)/examples $(outdir)/runfile
+# all: $(outdir) $(outdir)/tests $(outdir)/examples $(outdir)/runfile
+all: $(outdir) $(outdir)/tests.exe $(outdir)/examples.exe $(outdir)/runfile.exe
 
 $(outdir):
 	mkdir -p $@
 
-$(outdir)/%: $(outdir)/%.o $(outdir)/s7.o
+$(outdir)/%.exe: $(outdir)/%.o $(outdir)/s7.o
 	g++ $(CXXFLAGS) $< $(outdir)/s7.o -o $@
 
-$(outdir)/%.o: test/%.cpp include/s7.hpp include/function_traits.hpp
+$(outdir)/%.o: test/%.cpp include/s7.hpp
 	g++ $(CXXFLAGS) -c $< -o $@
 
 $(outdir)/s7.o: s7/s7.c
