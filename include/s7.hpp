@@ -15,7 +15,6 @@
 #include <optional>
 #include <utility>
 #include <array>
-#include "function_traits.hpp"
 #include "s7.h"
 #include "s7-config.h"
 
@@ -28,6 +27,81 @@
 #endif
 
 namespace s7 {
+
+namespace detail {
+    template <typename T> struct remove_class { };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...)>                { using type = R(A...); };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...) const>          { using type = R(A...); };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...) volatile>       { using type = R(A...); };
+    template <typename C, typename R, typename... A> struct remove_class<R(C::*)(A...) const volatile> { using type = R(A...); };
+
+    template <typename F> struct FunctionTraits;
+
+    template <typename R, typename... Args> struct FunctionTraits<R(*)(Args...)> : public FunctionTraits<R(Args...)> {};
+
+    template <typename R, typename... Args>
+    struct FunctionTraits<R(Args...)> {
+        using ReturnType = R;
+        using Signature = R(Args...);
+
+        static constexpr std::size_t arity = sizeof...(Args);
+
+        template <std::size_t N>
+        struct Argument {
+            static_assert(N < arity, "error: invalid parameter index.");
+            using Type = typename std::tuple_element<N, std::tuple<Args...>>::type;
+        };
+
+        static constexpr auto call_with_args(auto &&f)
+        {
+            return f.template operator()<Args...>();
+        }
+    };
+
+    // member function pointer
+    template <typename C, typename R, typename... Args> struct FunctionTraits<R(C::*)(Args...)>       : public FunctionTraits<R(C&, Args...)> {};
+    // const member function pointer
+    template <typename C, typename R, typename... Args> struct FunctionTraits<R(C::*)(Args...) const> : public FunctionTraits<R(C&, Args...)> {};
+    // member object pointer
+    template <typename C, typename R>                   struct FunctionTraits<R(C::*)()>              : public FunctionTraits<R(C&)> {};
+
+    // functor
+    template <typename F>
+    struct FunctionTraits {
+    private:
+        using TmpSig = typename detail::remove_class<
+            decltype(&std::remove_reference_t<F>::operator())
+        >::type;
+        using CallType = FunctionTraits<TmpSig>;
+
+    public:
+        using ReturnType = typename CallType::ReturnType;
+        using Signature = CallType::Signature;
+
+        static constexpr std::size_t arity = CallType::arity;
+
+        template <std::size_t N>
+        struct Argument {
+            static_assert(N < arity, "error: invalid parameter index.");
+            using Type = typename CallType::template Argument<N>::Type;
+        };
+
+        static constexpr auto call_with_args(auto &&f)
+        {
+            return CallType::call_with_args(std::move(f));
+        }
+    };
+
+    template <typename F> struct FunctionTraits<F  &> : public FunctionTraits<F> {};
+    template <typename F> struct FunctionTraits<F &&> : public FunctionTraits<F> {};
+
+    constexpr auto vmin(auto a) { return a; }
+    constexpr auto vmin(auto a, auto &&...args) { return std::min(a, vmin(args...)); }
+    constexpr auto vmax(auto a) { return a; }
+    constexpr auto vmax(auto a, auto &&...args) { return std::max(a, vmin(args...)); }
+    template <typename... Fns> constexpr auto max_arity() { return vmax(FunctionTraits<Fns>::arity...); }
+    template <typename... Fns> constexpr auto min_arity() { return vmin(FunctionTraits<Fns>::arity...); }
+} // namespace detail
 
 class List {
     s7_pointer p;
@@ -535,13 +609,6 @@ namespace detail {
         }
     }
 
-    constexpr auto vmin(auto a) { return a; }
-    constexpr auto vmin(auto a, auto &&...args) { return std::min(a, vmin(args...)); }
-    constexpr auto vmax(auto a) { return a; }
-    constexpr auto vmax(auto a, auto &&...args) { return std::max(a, vmin(args...)); }
-    template <typename... Fns> constexpr auto max_arity() { return vmax(FunctionTraits<Fns>::arity...); }
-    template <typename... Fns> constexpr auto min_arity() { return vmin(FunctionTraits<Fns>::arity...); }
-
     const char *input_mode_to_string(InputMode m) { return m == InputMode::Read ? "r" : ""; }
     const char *output_mode_to_string(OutputMode m) { return m == OutputMode::Write ? "w" : "a"; }
 } // namespace detail
@@ -617,9 +684,10 @@ template <typename T> constexpr bool is_varargs_v = is_varargs<T>::value;
 template <typename F>
 constexpr bool function_has_varargs()
 {
-    if constexpr(FunctionTraits<F>::arity == 0) {
+    constexpr auto Arity = detail::FunctionTraits<F>::arity;
+    if constexpr(Arity == 0) {
         return false;
-    } else if constexpr(!is_varargs_v<typename FunctionTraits<F>::Argument<FunctionTraits<F>::arity - 1>::Type>) {
+    } else if constexpr(!is_varargs_v<typename detail::FunctionTraits<F>::Argument<Arity - 1>::Type>) {
         return false;
     }
     return true;
@@ -1044,8 +1112,8 @@ class Scheme {
 
     template <typename T, typename F>
     void usertype_add_op(std::string_view name, s7_int tag, Op op, F &&fn)
-        requires (std::is_same_v<T,          std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>
-               || std::is_same_v<s7_pointer, std::remove_cvref_t<typename FunctionTraits<F>::Argument<0>::Type>>)
+        requires (std::is_same_v<T,          std::remove_cvref_t<typename detail::FunctionTraits<F>::Argument<0>::Type>>
+               || std::is_same_v<s7_pointer, std::remove_cvref_t<typename detail::FunctionTraits<F>::Argument<0>::Type>>)
     {
         auto set_func = op == Op::Equal    ? s7_c_type_set_is_equal
                       : op == Op::Equivalent ? s7_c_type_set_is_equivalent
@@ -1063,7 +1131,7 @@ class Scheme {
         auto func_name = std::format("{}-op", name);
         auto _name = s7_string(save_string(func_name));
         s7_function f;
-        if constexpr(FunctionTraits<F>::arity == 1) {
+        if constexpr(detail::FunctionTraits<F>::arity == 1) {
             if (op == Op::GcMark) {
                 auto fn2 = detail::as_lambda(fn);
                 f = detail::make_s7_function(sc, _name, [fn2](s7_pointer obj) -> s7_pointer {
@@ -1323,7 +1391,7 @@ public:
         if constexpr(function_has_varargs(func)) {
             return define(sc, _name, f, 0, 0, true, doc.data(), sig);
         } else {
-            constexpr auto NumArgs = FunctionTraits<F>::arity;
+            constexpr auto NumArgs = detail::FunctionTraits<F>::arity;
             return define(sc, _name, f, NumArgs, 0, false, doc.data(), sig);
         }
     }
@@ -1373,7 +1441,7 @@ public:
     template <typename F>
     void define_macro(std::string_view name, std::string_view doc, F &&func)
     {
-        constexpr auto NumArgs = FunctionTraits<F>::arity;
+        constexpr auto NumArgs = detail::FunctionTraits<F>::arity;
         auto _name = s7_string(save_string(name));
         auto f = detail::make_s7_function(sc, _name, func);
         s7_define_macro(sc, _name, f, NumArgs, 0, false, doc.data());
@@ -1439,7 +1507,7 @@ public:
             s7_c_type_set_ref(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
                 auto &scheme = *reinterpret_cast<Scheme *>(&sc);
                 auto *obj = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)));
-                using ArgType = typename FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
+                using ArgType = typename detail::FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
                 auto arg = s7_cadr(args);
 #ifdef S7_DEBUGGING
                 if (!scheme.is<ArgType>(arg)) {
@@ -1453,8 +1521,8 @@ public:
             s7_c_type_set_set(sc, tag, [](s7_scheme *sc, s7_pointer args) -> s7_pointer {
                 auto &scheme = *reinterpret_cast<Scheme *>(&sc);
                 auto *obj = reinterpret_cast<T *>(s7_c_object_value(s7_car(args)));
-                using IndexType = typename FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
-                using ValueType = std::remove_cvref_t<typename FunctionTraits<decltype(&T::operator[])>::ReturnType>;
+                using IndexType = typename detail::FunctionTraits<decltype(&T::operator[])>::Argument<1>::Type;
+                using ValueType = std::remove_cvref_t<typename detail::FunctionTraits<decltype(&T::operator[])>::ReturnType>;
                 auto index = s7_cadr(args);
 #ifdef S7_DEBUGGING
                 if (!scheme.is<IndexType>(index)) {
@@ -1546,8 +1614,8 @@ public:
     template <typename F, typename G>
     void define_property(std::string_view name, std::string_view doc, F &&getter, G &&setter)
     {
-        constexpr auto NumArgsF = FunctionTraits<F>::arity;
-        constexpr auto NumArgsG = FunctionTraits<G>::arity;
+        constexpr auto NumArgsF = detail::FunctionTraits<F>::arity;
+        constexpr auto NumArgsG = detail::FunctionTraits<G>::arity;
         auto g = detail::make_s7_function(sc, name.data(), getter);
         auto s = detail::make_s7_function(sc, name.data(), setter);
         auto gsig = make_signature(getter);
