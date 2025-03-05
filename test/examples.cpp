@@ -150,9 +150,9 @@ void example_add_extension_method()
         if (!scheme.is<s7_int>(x) && !scheme.is<double>(x)) {
             auto method = scheme.find_method(x, "abs");
             if (!method) {
-                return scheme.error(s7::errors::WrongType {
-                    .arg = x, .arg_n = 1, .type = "a real", .caller = "abs"
-                });
+                throw s7::errors::WrongType {
+                    .arg = x, .arg_n = 1, .desc = "a real", .caller = "abs"
+                };
             }
             return scheme.call(method.value(), x);
         } else {
@@ -411,14 +411,14 @@ int main(int argc, char *argv[])
     // example_listener_dax();
     // example_ports_redirect();
     // example_add_extension();
-    // example_add_extension_method();
+    example_add_extension_method();
     // example_star_function();
     // example_macro();
     // example_generic_function();
     // example_signals_continuations();
     // example_notification();
     // example_namespace(argc, argv);
-    example_handle_errors();
+    // example_handle_errors();
     // example_hooks();
     // example_load_library
 }

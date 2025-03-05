@@ -243,6 +243,34 @@ struct Constructors<> {
     explicit Constructors(std::string_view name) : name(name) {}
 };
 
+namespace errors {
+
+struct Error {
+    std::string_view type;
+    List info;
+};
+
+struct WrongType {
+    s7_pointer arg;
+    s7_int arg_n;
+    std::string desc;
+    std::string_view caller;
+};
+
+struct OutOfRange {
+    s7_pointer arg;
+    s7_int arg_n;
+    std::string desc;
+    std::string_view caller;
+};
+
+struct WrongArgsNumber {
+    s7_pointer args;
+    std::string_view caller;
+};
+
+} // errors
+
 namespace detail {
     template <typename L>
     struct LambdaTable {
@@ -623,9 +651,6 @@ struct VarArgs {
 public:
     using Type = T;
 
-    VarArgs(s7_scheme *sc, s7_pointer p, std::string_view caller)
-        : sc(sc), p(p), caller(caller), arg_n(1) {}
-
     VarArgs(s7_scheme *sc, s7_pointer p, std::string_view caller, s7_int arg_n)
         : sc(sc), p(p), caller(caller), arg_n(arg_n) {}
 
@@ -636,10 +661,8 @@ public:
         } else {
 #ifdef S7_DEBUGGING
             if (!detail::is<T>(sc, x)) {
-                // this is actually fine, since s7_wrong_type_arg_error is a
-                // noreturn function (despite not marked as such)
                 auto s = std::format("a {}", detail::type_to_string<T>(sc));
-                return detail::to<T>(sc, s7_wrong_type_arg_error(sc, caller.data(), arg_n, x, s.c_str()));
+                throw errors::WrongType { .arg = x, .arg_n = arg_n, .desc = s, .caller = caller };
             }
 #endif
             return detail::to<T>(sc, x);
@@ -657,7 +680,7 @@ public:
     struct iterator {
         using value_type = T;
 
-        VarArgs va = VarArgs(nullptr, nullptr, "");
+        VarArgs va = VarArgs(nullptr, nullptr, "", 1);
 
         iterator() = default;
         explicit iterator(VarArgs va) : va(va) {}
@@ -751,26 +774,32 @@ namespace detail {
         }
 #endif
 
-        if constexpr(std::is_same_v<R, void>) {
-            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
-                    fn(detail::to<Args>(sc, arr[Is])...);
-                } else {
-                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
-                    fn(detail::to<Args>(sc, arr[Is])..., varargs);
-                }
-            }(std::make_index_sequence<NumArgs>());
-            return s7_unspecified(sc);
-        } else {
-            return detail::from(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
-                    return fn(detail::to<Args>(sc, arr[Is])...);
-                } else {
-                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
-                    return fn(detail::to<Args>(sc, arr[Is])..., varargs);
-                }
-            }(std::make_index_sequence<NumArgs>()));
+        try {
+            if constexpr(std::is_same_v<R, void>) {
+                [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                        fn(detail::to<Args>(sc, arr[Is])...);
+                    } else {
+                        auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name, NumArgs + 1);
+                        fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                    }
+                }(std::make_index_sequence<NumArgs>());
+                return s7_unspecified(sc);
+            } else {
+                return detail::from(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                        return fn(detail::to<Args>(sc, arr[Is])...);
+                    } else {
+                        auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name, NumArgs + 1);
+                        return fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                    }
+                }(std::make_index_sequence<NumArgs>()));
+            }
         }
+        catch(const errors::Error &err)           { return s7_error(                     sc, s7_make_symbol(sc, err.type.data()), err.info.ptr()); }
+        catch(const errors::WrongType &err)       { return s7_wrong_type_arg_error(      sc, err.caller.data(), err.arg_n, err.arg, err.desc.c_str()); }
+        catch(const errors::OutOfRange &err)      { return s7_out_of_range_error(        sc, err.caller.data(), err.arg_n, err.arg, err.desc.c_str()); }
+        catch(const errors::WrongArgsNumber &err) { return s7_wrong_number_of_args_error(sc, err.caller.data(), err.args); }
     }
 
     template <typename... Args>
@@ -832,26 +861,32 @@ namespace detail {
             return nullptr;
         }
 
-        if constexpr(std::is_same_v<R, void>) {
-            [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
-                    fn(detail::to<Args>(sc, arr[Is])...);
-                } else {
-                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
-                    fn(detail::to<Args>(sc, arr[Is])..., varargs);
-                }
-            }(std::make_index_sequence<NumArgs>());
-            return s7_unspecified(sc);
-        } else {
-            return detail::from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
-                    return fn(detail::to<Args>(sc, arr[Is])...);
-                } else {
-                    auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name);
-                    return fn(detail::to<Args>(sc, arr[Is])..., varargs);
-                }
-            }(std::make_index_sequence<NumArgs>()));
+        try {
+            if constexpr(std::is_same_v<R, void>) {
+                [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                        fn(detail::to<Args>(sc, arr[Is])...);
+                    } else {
+                        auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name, NumArgs + 1);
+                        fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                    }
+                }(std::make_index_sequence<NumArgs>());
+                return s7_unspecified(sc);
+            } else {
+                return detail::from<R>(sc, [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    if constexpr(std::is_same_v<VarArgsType, NoVarArgs>) {
+                        return fn(detail::to<Args>(sc, arr[Is])...);
+                    } else {
+                        auto varargs = VarArgs<VarArgsType>(sc, arglist.ptr(), name, NumArgs + 1);
+                        return fn(detail::to<Args>(sc, arr[Is])..., varargs);
+                    }
+                }(std::make_index_sequence<NumArgs>()));
+            }
         }
+        catch(const errors::Error &err)           { return s7_error(                     sc, s7_make_symbol(sc, err.type.data()), err.info.ptr()); }
+        catch(const errors::WrongType &err)       { return s7_wrong_type_arg_error(      sc, err.caller.data(), err.arg_n, err.arg, err.desc.c_str()); }
+        catch(const errors::OutOfRange &err)      { return s7_out_of_range_error(        sc, err.caller.data(), err.arg_n, err.arg, err.desc.c_str()); }
+        catch(const errors::WrongArgsNumber &err) { return s7_wrong_number_of_args_error(sc, err.caller.data(), err.args); }
     }
 
     template <typename F>
@@ -978,34 +1013,6 @@ namespace detail {
     }
 } // namespace detail
 
-namespace errors {
-
-struct Error {
-    std::string_view type;
-    List info;
-};
-
-struct WrongType {
-    s7_pointer arg;
-    s7_int arg_n;
-    std::string_view type;
-    std::string_view caller;
-};
-
-struct OutOfRange {
-    s7_pointer arg;
-    std::string_view type;
-    s7_int arg_n;
-    std::string_view caller;
-};
-
-struct WrongArgsNumber {
-    s7_pointer args;
-    std::string_view caller;
-};
-
-} // errors
-
 enum class Op {
     Equal, Equivalent, Copy, Fill, Reverse, GcMark, GcFree,
     Length, ToString, ToList, Ref, Set,
@@ -1113,13 +1120,13 @@ class Scheme {
             constexpr auto Name = method_op_fn<op>();
             if (args.size() == 0) {
                 return call(old, nil());
-            } else if (args.size() == 0) {
+            } else if (args.size() == 1) {
                 auto p = args.car();
                 if (s7_is_c_object(p)) {
                     auto method = find_method(s7_c_object_let(p), Name);
                     if (!method) {
                         auto msg = std::format("a c-object that defines {}", Name);
-                        return s7_wrong_type_arg_error(sc, Name.data(), 0, p, msg.c_str());
+                        throw errors::WrongType { .arg = p, .arg_n = 0, .desc = msg, .caller = Name };
                     }
                     return call(method.value(), p);
                 } else {
@@ -1127,17 +1134,21 @@ class Scheme {
                 }
             }
             auto res = args.advance();
+            s7_int arg_n = 1;
             for (auto arg : args) {
                 if (s7_is_c_object(res) || s7_is_c_object(arg)) {
                     auto p = s7_is_c_object(res) ? res : arg;
                     auto method = find_method(s7_c_object_let(p), Name);
                     if (!method) {
-                        return s7_wrong_type_arg_error(sc, Name.data(), 0, res, "a c-object that defines +");
+                        auto msg = std::format("a c-object that defines {}", Name);
+                        throw errors::WrongType { .arg = res, .arg_n = p == res ? arg_n : arg_n + 1,
+                                                  .desc = msg, .caller = Name };
                     }
                     res = call(method.value(), res, arg);
                 } else {
                     res = call(old, res, arg);
                 }
+                arg_n++;
             }
             return res;
         };
@@ -1333,16 +1344,6 @@ public:
     // make_c_object
     template <typename T> s7_pointer make_c_object(s7_int tag, T *p) { return detail::make_c_object(sc, tag, p); }
     template <typename T> s7_pointer make_c_object(T *p)             { return make_c_object(detail::get_type_tag<T>(sc), p); }
-
-    /* errors */
-    template <typename T>
-    s7_pointer error(T &&data)
-    {
-        if constexpr(std::is_same_v<T, errors::Error>)           { return s7_error(sc, s7_make_symbol(sc, data.type.data()), data.info.ptr()); }
-        if constexpr(std::is_same_v<T, errors::WrongType>)       { return s7_wrong_type_arg_error(sc, data.caller.data(), data.arg_n, data.arg, data.type.data()); }
-        if constexpr(std::is_same_v<T, errors::OutOfRange>)      { return s7_out_of_range_error(sc, data.caller.data(), data.arg_n, data.arg, data.type.data()); }
-        if constexpr(std::is_same_v<T, errors::WrongArgsNumber>) { return s7_wrong_number_of_args_error(sc, data.caller.data(), data.args); }
-    }
 
     /* define/get/set variables + sym */
     template <typename T>

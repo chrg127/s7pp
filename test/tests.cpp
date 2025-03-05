@@ -46,13 +46,7 @@ s7_pointer add1(s7_scheme *sc, s7_pointer _args)
     if (scheme.is<int64_t>(args[0])) {
         return scheme.from<int64_t>(scheme.to<int64_t>(args[0]) + 1);
     }
-
-    return scheme.error(s7::errors::WrongType {
-       .arg = args[0],
-       .arg_n = 1,
-       .type = "integer",
-       .caller = "add1",
-   });
+    return s7_wrong_type_arg_error(sc, "add1", 1, args[0], "an integer");
 }
 
 void test_c_defined_function()
@@ -185,6 +179,8 @@ struct v2 {
 v2 operator*(double x, v2 v) { return v2 { v.x * x, v.y * x }; }
 v2 operator*(v2 v, double x) { return v2 { v.x * x, v.y * x }; }
 
+struct A {};
+
 void test_v2()
 {
     s7::Scheme scheme;
@@ -202,7 +198,10 @@ void test_v2()
     );
     scheme.define_property("v2-x", "(v2-x v2) accesses x", [](const v2 &v) { return v.x; }, [](v2 &v, double x) { v.x = x; });
     scheme.define_property("v2-y", "(v2-y v2) accesses y", [](const v2 &v) { return v.y; }, [](v2 &v, double y) { v.y = y; });
+
     scheme.define_function("test", "doc", s7::Overload([](s7_int x) { return x + 1; }, []() { return 0; }));
+    scheme.make_usertype<A>("a");
+
     scheme.repl();
 }
 
@@ -288,21 +287,32 @@ void test_history()
     }
 }
 
+void test_errors()
+{
+    s7::Scheme scheme;
+    scheme.define_function("errs", "", [&](s7_int x) {
+        if (x == 0) throw s7::errors::Error("generic-error", scheme.list("x = ~a\n", x));
+        if (x == 1) throw s7::errors::WrongType { .arg = scheme.from(x), .arg_n = 1, .desc = "a nothing", .caller = "errs" };
+        if (x == 2) throw s7::errors::OutOfRange { .arg = scheme.from(x), .arg_n = 1, .desc = "somehow", .caller = "errs" };
+        if (x == 3) throw s7::errors::WrongArgsNumber { .args = scheme.from(scheme.list(1, 2, 3)), .caller = "errs" };
+    });
+    scheme.repl();
+}
+
 int main(int argc, char *argv[])
 {
     // test_scheme_defined_function();
     // test_c_defined_function();
     // test_conversion();
     // test_define_function();
-    test_set();
-    // test_v2();
+    // test_set();
+    test_v2();
     // test_star_fns();
     // test_varargs();
     // test_sig();
     // test_type_of();
     // test_complex();
     // test_history();
-    // s7::Scheme scheme;
-    // scheme.repl();
+    // test_errors();
 }
 
