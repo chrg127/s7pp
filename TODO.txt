@@ -1,5 +1,4 @@
 - cmake
-- documentation
 
 partially completed, not sure if actually completed:
 - more checks when defining ops on usertypes
