@@ -328,7 +328,7 @@ void example_handle_errors()
 
             scheme.current_error_port().close();
             if (gc_loc != -1) {
-                scheme.unprotect_at(gc_loc);
+                scheme.unprotect(gc_loc);
             }
         }
         printf("\n");

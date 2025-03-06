@@ -7,7 +7,8 @@ S7FLAGS := -std=c++20 -g
 outdir := build
 
 # all: $(outdir) $(outdir)/tests $(outdir)/examples $(outdir)/runfile
-all: $(outdir) $(outdir)/tests.exe $(outdir)/examples.exe $(outdir)/runfile.exe
+all: $(outdir) $(outdir)/tests.exe $(outdir)/examples.exe $(outdir)/runfile.exe $(outdir)/listiter.exe \
+	$(outdir)/v2.exe
 
 $(outdir):
 	mkdir -p $@

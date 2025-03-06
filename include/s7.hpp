@@ -103,6 +103,9 @@ namespace detail {
     template <typename... Fns> constexpr auto min_arity() { return vmin(FunctionTraits<Fns>::arity...); }
 } // namespace detail
 
+// Represents an immutable scheme list.
+// You can traverse a List using a C++ for-loop: `for (auto p : list)`
+// Or a C-style one: `for (auto l = <expr>; !l.empty(); l.advance()) { auto p = l.car(); ... }`
 class List {
     s7_pointer p;
 
@@ -121,9 +124,11 @@ public:
     s7_pointer car() const { return s7_car(p); }
     List cdr() const       { return List(s7_cdr(p)); }
     s7_pointer ptr() const { return p; }
-    bool at_end()          { return !s7_is_pair(p); }
+    bool empty() const     { return !s7_is_pair(p); }
+    // Advances the list to the next element while returning the old one.
     s7_pointer advance()   { auto tmp = s7_car(p); p = s7_cdr(p); return tmp; }
 
+    // Returns the list's size. Note that this operation is O(n).
     std::size_t size() const
     {
         size_t s = 0;
@@ -155,6 +160,8 @@ public:
     iterator end() { return iterator(); }
 };
 
+// A type that indicates in C/C++ functions that this function return multiple values.
+// Can be used in `from`, can't be used in `to`.
 struct Values {
     s7_pointer p;
 public:
@@ -162,6 +169,7 @@ public:
     s7_pointer ptr() const { return p; }
 };
 
+// Represents a scheme procedure.
 class Function {
     s7_pointer p;
 
@@ -178,6 +186,7 @@ public:
 
 class Let;
 
+// Represents a scheme input port.
 class InputPort {
     s7_scheme *sc;
     s7_pointer p;
@@ -192,10 +201,12 @@ public:
     void close() { s7_close_input_port(sc, p); }
 };
 
+// Used in open_file to indicate the mode to use to open the file.
 enum class InputMode {
     Read,
 };
 
+// Represents a scheme outport port.
 class OutputPort {
     s7_scheme *sc;
     s7_pointer p;
@@ -213,21 +224,28 @@ public:
     void close() { s7_close_output_port(sc, p); }
 };
 
+// Used in open_file to indicate the mode to use to open the file.
 enum class OutputMode {
     Write, Alter
 };
 
+// Used when defining/making a function. Generally all functions are assumed to be
+// safe; if you call any 'unsafe' s7 functions inside them, set these options
+// accordingly.
 struct FunctionOpts {
     bool unsafe_body = false;
     bool unsafe_arglist = false;
 };
 
+// A type to be used to create functions overloads in scheme.
 template <typename... Fns>
 struct Overload {
     std::tuple<Fns...> fns;
     explicit Overload(Fns&&... fns) : fns(fns...) {}
 };
 
+// A type to be used when defining C/C++-side types. make_usertype will use `name`
+// and `overload` to define a corresponding function that creates objects of a certain type.
 template <typename... Fns>
 struct Constructors {
     std::string_view name = "";
@@ -243,32 +261,42 @@ struct Constructors<> {
     explicit Constructors(std::string_view name) : name(name) {}
 };
 
+// Errors in s7pp must be thrown: DO NOT use s7_error! This is because s7 uses
+// longjmp to handle errors, and that can have problems with C++ destructors.
+// If you have disabled exception, I suggest using error codes instead,
+// then using the appropriate s7 function once you're sure no non-trivial
+// destructors can be called.
 namespace errors {
+    // A generic s7 error.
+    struct Error {
+        std::string_view type;
+        List info;
+    };
 
-struct Error {
-    std::string_view type;
-    List info;
-};
+    // Error used when an argument has a wrong type. The error will be of the form
+    // <caller> <arg_n> argument, <arg>, is a <type> but should be <desc>
+    struct WrongType {
+        s7_pointer arg;
+        s7_int arg_n;
+        std::string desc;
+        std::string_view caller;
+    };
 
-struct WrongType {
-    s7_pointer arg;
-    s7_int arg_n;
-    std::string desc;
-    std::string_view caller;
-};
+    // Error used when an argument is out of range. The error will be of the form
+    // <caller> <arg_n> argument, <arg>, is out of range (<desc>)
+    struct OutOfRange {
+        s7_pointer arg;
+        s7_int arg_n;
+        std::string desc;
+        std::string_view caller;
+    };
 
-struct OutOfRange {
-    s7_pointer arg;
-    s7_int arg_n;
-    std::string desc;
-    std::string_view caller;
-};
-
-struct WrongArgsNumber {
-    s7_pointer args;
-    std::string_view caller;
-};
-
+    // Error used a function has a wrong number of arguments. The error will be of the form
+    // wrong-number-of-args (<caller> (<args>))
+    struct WrongArgsNumber {
+        s7_pointer args;
+        std::string_view caller;
+    };
 } // errors
 
 namespace detail {
@@ -360,7 +388,7 @@ namespace detail {
         return f;
     }
 
-    // (type-of p) that also works for c types
+    // (type-of p) that also works for C++ types
     // type names should always correspond to the respective ? functions
     // (unless there is no ? function for the type
     std::string_view type_of(s7_scheme *sc, s7_pointer p)
@@ -641,18 +669,22 @@ namespace detail {
     const char *output_mode_to_string(OutputMode m) { return m == OutputMode::Write ? "w" : "a"; }
 } // namespace detail
 
+// A type to be used inside the argument list of a C++ function. It indicates
+// that the function accepts a variable number of arguments, all of type T.
+// VarArgs will also take care of arguments that aren't of type T by returning
+// a wrong type error.
+// If you need generic variable arguments, use VarArgs<s7_pointer>.
+// VarArgs's interface is the same as List, except that various functions
+// (car, advance()) return T.
 template <typename T>
 struct VarArgs {
+    using Type = T;
+
+private:
     s7_scheme *sc;
     s7_pointer p;
     std::string_view caller;
     s7_int arg_n;
-
-public:
-    using Type = T;
-
-    VarArgs(s7_scheme *sc, s7_pointer p, std::string_view caller, s7_int arg_n)
-        : sc(sc), p(p), caller(caller), arg_n(arg_n) {}
 
     T convert(s7_pointer x) const
     {
@@ -669,12 +701,17 @@ public:
         }
     }
 
+public:
+
+    VarArgs(s7_scheme *sc, s7_pointer p, std::string_view caller, s7_int arg_n)
+        : sc(sc), p(p), caller(caller), arg_n(arg_n) {}
+
     T car() const                     { return convert(s7_car(p)); }
     T operator[](std::size_t i) const { return convert(s7_list_ref(sc, p, i)); }
     std::size_t size() const          { return s7_list_length(sc, p); }
     VarArgs cdr() const               { return VarArgs(sc, s7_cdr(p), caller, arg_n+1); }
     s7_pointer ptr() const            { return p; }
-    bool at_end()                     { return !s7_is_pair(p); }
+    bool empty() const                { return !s7_is_pair(p); }
     T advance()                       { auto tmp = car(); p = s7_cdr(p); return tmp; }
 
     struct iterator {
@@ -700,10 +737,15 @@ public:
     iterator end() { return iterator(); }
 };
 
+// Checks if T is a VarArgs<?> type.
 template <typename T> struct is_varargs             { static constexpr inline bool value = false; };
 template <typename T> struct is_varargs<VarArgs<T>> { static constexpr inline bool value = true; };
+// Helper for is_varargs.
 template <typename T> constexpr bool is_varargs_v = is_varargs<T>::value;
 
+// Checks if a function has a VarArgs<?> type as its last argument.
+// (Any VarArgs that doesn't appear as the last argument is an error and will
+// fail at runtime)
 template <typename F>
 constexpr bool function_has_varargs()
 {
@@ -1013,11 +1055,17 @@ namespace detail {
     }
 } // namespace detail
 
+// Generic operations that can be put on a type. s7 itself trasparently supports
+// all of these.
 enum class Op {
     Equal, Equivalent, Copy, Fill, Reverse, GcMark, GcFree,
     Length, ToString, ToList, Ref, Set,
 };
 
+// Generic operations that can be put on a type. However, since s7 doesn't
+// really support these, they are emulated by placing a method on every C-object
+// of the type and substituting the corresponding operation (which can be slower).
+// I call these "method-based operator".
 enum class MethodOp {
     Add, Sub, Mul, Div
 };
@@ -1031,13 +1079,16 @@ constexpr std::string_view method_op_fn()
     if constexpr(op == MethodOp::Div) { return "/"; }
 }
 
-// implementation taken from https://github.com/ThePhD/sol2/blob/develop/include/sol/resolve.hpp
+// To be used to resolve overloaded C++ functions.
+// Implementation taken from https://github.com/ThePhD/sol2/blob/develop/include/sol/resolve.hpp
 // and kept intentionally simple (you shouldn't need to use these except for cases like operators)
 template <typename Sig>             inline constexpr Sig    *resolve(Sig    *f) { return f; }
 template <typename Sig, typename C> inline constexpr Sig C::*resolve(Sig C::*f) { return f; }
 
 struct Variable;
 
+// Represents a scheme let, i.e. an environment. It has the same interface as
+// the define variable/function parts of the main Scheme class.
 class Let {
     s7_scheme *sc;
     s7_pointer let;
@@ -1047,6 +1098,7 @@ public:
 
     s7_pointer ptr() const { return let; }
 
+    // Defines a binding with `name` and `value` inside this environment.
     template <typename T> s7_pointer define(std::string_view name, const T &value, std::string_view doc = "")
     {
         auto object = detail::from(sc, value);
@@ -1056,6 +1108,7 @@ public:
         return sym;
     }
 
+    // Defines a binding with `name` and `value` inside this environment.
     template <typename T> s7_pointer define(std::string_view name, T &&value, std::string_view doc = "")
     {
         auto object = detail::from(sc, std::move(value));
@@ -1065,6 +1118,8 @@ public:
         return sym;
     }
 
+    // Defines an immutable binding (can't use set! on it) with `name` and `value`
+    // inside this environment.
     template <typename T>
     s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
     {
@@ -1073,6 +1128,8 @@ public:
         return sym;
     }
 
+    // Defines an immutable binding (can't use set! on it) with `name` and `value`
+    // inside this environment.
     template <typename T>
     s7_pointer define_const(std::string_view name, T &&value, std::string_view doc = "")
     {
@@ -1081,16 +1138,8 @@ public:
         return sym;
     }
 
-    Variable operator[](std::string_view name);
-
-    template <typename T> T get(std::string_view name)        { return to<T>(s7_let_ref(sc, let, s7_make_symbol(sc, name.data()))); }
-    template <typename T> auto get_opt(std::string_view name) { return to_opt<T>(s7_let_ref(sc, let, s7_make_symbol(sc, name.data()))); }
-
-    template <typename T> void set(std::string_view name, const T  &value) { s7_let_set(sc, s7_make_symbol(sc, name.data()), from(value)); }
-    template <typename T> void set(std::string_view name,       T &&value) { s7_let_set(sc, s7_make_symbol(sc, name.data()), from(std::move(value))); }
-
-    List to_list() const { return List(s7_let_to_list(sc, let)); }
-
+    // Defines a function in this environment with name `name` and with documentation `doc`. Use `opts` to set
+    // whether the function is unsafe in some way (See `FunctionOpts` documentation for details). 
     template <typename F>
     s7_pointer define_function(std::string_view name, std::string_view doc, F &&fn, FunctionOpts opts = {})
     {
@@ -1099,14 +1148,30 @@ public:
         return f.ptr();
     }
 
+    // (define* (`name` `arglist_desc` ...) ...). Note that no checks are done
+    // to `arglist_desc` to make sure it follows `func`'s signature.
     template <typename F>
     void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F &&fn)
     {
         auto f = detail::make_star_function(sc, name, arglist_desc, doc, std::move(fn));
         define(name, f.ptr(), doc);
     }
+
+    Variable operator[](std::string_view name);
+
+    // Gets the value of a variable `name` from this environment and converts it to `T`.
+    template <typename T> T get(std::string_view name)        { return to<T>(s7_let_ref(sc, let, s7_make_symbol(sc, name.data()))); }
+    // Same as `get`, but uses `to_opt` for conversion and therefore returns an std::optional.
+    template <typename T> auto get_opt(std::string_view name) { return to_opt<T>(s7_let_ref(sc, let, s7_make_symbol(sc, name.data()))); }
+    // (set! `name` `value`)
+    template <typename T> void set(std::string_view name, const T  &value) { s7_let_set(sc, s7_make_symbol(sc, name.data()), from(value)); }
+    template <typename T> void set(std::string_view name,       T &&value) { s7_let_set(sc, s7_make_symbol(sc, name.data()), from(std::move(value))); }
+
+    // Turns each definition inside the Let in a list of pairs.
+    List to_list() const { return List(s7_let_to_list(sc, let)); }
 };
 
+// Represents an s7 scheme interpreter. This is the main class you'll be using.
 class Scheme {
     s7_scheme *sc;
     // NOTE: any following field can't be accessed inside non-capturing lambdas
@@ -1194,7 +1259,7 @@ class Scheme {
     }
 
     template <typename T, typename F>
-    void usertype_add_method_op(std::string_view name, s7_pointer let, MethodOp op, F &&fn)
+    void usertype_add_method_op(std::string_view name, Let let, MethodOp op, F &&fn)
     {
         auto opname = op == MethodOp::Add ? "+"
                     : op == MethodOp::Sub ? "-"
@@ -1204,7 +1269,7 @@ class Scheme {
         // put fn as a method
         auto _name = std::format("{} ({} method)", opname, name);
         Function add_method = make_function(_name, "custom method for usertype", std::move(fn));
-        Let(sc, let).define(opname, add_method);
+        let.define(opname, add_method);
         // substitute op
         if (!substitured_ops.contains(op)) {
             auto doc = s7_documentation(sc, s7_name_to_value(sc, opname));
@@ -1257,15 +1322,20 @@ public:
 
     s7_scheme *ptr() { return sc; }
 
-    /* eval, load, repl */
-    s7_pointer eval(std::string_view code)
-    {
-        return s7_eval_c_string(sc, code.data());
-    }
+    // Evaluates a string of code. The code may be one single expression,
+    // use `load_string` to evaluate multiple statements.
+    s7_pointer eval(std::string_view code) { return s7_eval_c_string(sc, code.data()); }
 
-    s7_pointer load(std::string_view filepath) { return s7_load(sc, filepath.data()); }
+    // Loads and evaluates an entire file. `path` corresponds to the path of the file.
+    s7_pointer load(std::string_view path) { return s7_load(sc, path.data()); }
+
+    // Evaluates a string of code. Note that load_string is different from
+    // `eval`, since `load_string` will execute statements too.
     s7_pointer load_string(std::string_view string) { return s7_load_c_string(sc, string.data(), string.size()); }
 
+    // This is a customizable repl (unlike s7_repl()). The `input` function is responsible
+    // for getting input, likewise for the `output` function. The `quit` function
+    // decides when to quit; its input is the output of the `input` function.
     void repl(
         std::function<bool(std::string_view)> quit = [](std::string_view) { return false; },
         std::function<void(std::string_view)> output = [](std::string_view s) {
@@ -1292,28 +1362,45 @@ public:
     }
 
     /* gc */
+    // Turns the GC on and off.
     s7_pointer gc_on(bool on)                 { return s7_gc_on(sc, on); }
+
+    // Protects a s7 object from being freed while there are no references to it.
+    // Use `unprotect` later to un-protect the object.
     s7_int protect(s7_pointer p)              { return s7_gc_protect(sc, p); }
     template <typename T> s7_int protect(T p) { return s7_gc_protect(sc, p.ptr()); }
-    void unprotect_at(s7_int loc)             { s7_gc_unprotect_at(sc, loc); }
+    void unprotect(s7_int loc)                { s7_gc_unprotect_at(sc, loc); }
+
+    // Marks an object during the GC's mark phase. You should be using these only
+    // inside a GcMark function.
     void mark(s7_pointer p)                   { s7_mark(p); }
     template <typename T> void mark(T p)      { s7_mark(p.ptr()); }
 
     /* constants */
+    // All of these can be == safely to figure out if an object is that constant.
+    // For `nil` there is also a corresponding `is_nil`.
+
     s7_pointer nil()         { return s7_nil(sc); }
     s7_pointer undefined()   { return s7_undefined(sc); }
     s7_pointer unspecified() { return s7_unspecified(sc); }
     s7_pointer eof()         { return s7_eof_object(sc); }
 
-    /* functions for inspecting and converting from/to scheme objects */
+    // Can `p` be converted to a `T`?
     template <typename T> bool is(s7_pointer p)         { return s7::detail::is<T>(sc, p); }
+    // Converts `p` to a `T` without any checks.
     template <typename T> T to(s7_pointer p)            { return s7::detail::to<T>(sc, p); }
+    // Creates an s7 object from `obj`. Note that `from` accepts way more types
+    // than what `to` allows, for example std::vector's and lambdas.
     template <typename T> s7_pointer from(const T &obj) { return s7::detail::from(sc, obj); }
     template <typename T> s7_pointer from(T &&obj)      { return s7::detail::from(sc, std::move(obj)); }
+    // Is `p` a number? (either a real? or integer?)
     bool is_number(s7_pointer p) { return s7_is_number(p); }
+    bool is_nil(s7_pointer p) { return s7_is_null(sc, p); }
+    // Note that eq? corresponds to s7_is_eq, that's why it isn't provided.
     bool is_equal(s7_pointer a, s7_pointer b) { return s7_is_equal(sc, a, b); }
     bool is_equivalent(s7_pointer a, s7_pointer b) { return s7_is_equivalent(sc, a, b); }
 
+    // Converts `p` to a `T`, but checks that it is a `T` first. Returns an std::optional.
     template <typename T>
     std::optional<T> to_opt(s7_pointer p)
     {
@@ -1323,6 +1410,7 @@ public:
         return detail::to<T>(sc, p);
     }
 
+    // Converts `p` to its string representation.
     std::string_view to_string(s7_pointer p)
     {
         // avoid s7_object_to_c_string since return value must be freed
@@ -1341,29 +1429,33 @@ public:
     template <typename T> Values values(VarArgs<T> l)         { return Values(s7_values(sc, l.ptr())); }
     template <typename... Args> Values values(Args &&...args) { return Values(s7_values(sc, list(FWD(args)...).ptr())); }
 
-    // make_c_object
+    // Directly creates an s7 object of an usertype, using `p` as the pointer.
+    // Most useful in usertype constructors: this lets one using custom allocators instead of new/delete.
     template <typename T> s7_pointer make_c_object(s7_int tag, T *p) { return detail::make_c_object(sc, tag, p); }
     template <typename T> s7_pointer make_c_object(T *p)             { return make_c_object(detail::get_type_tag<T>(sc), p); }
 
-    /* define/get/set variables + sym */
+    // Defines a variable binding with `name` and `value`.
     template <typename T>
     s7_pointer define(std::string_view name, const T &value, std::string_view doc = "")
     {
         return s7_define_variable_with_documentation(sc, name.data(), from(value), doc.data());
     }
 
+    // Defines a variable binding with `name` and `value`.
     template <typename T>
     s7_pointer define(std::string_view name, T &&value, std::string_view doc = "")
     {
         return s7_define_variable_with_documentation(sc, name.data(), from(std::move(value)), doc.data());
     }
 
+    // Defines an immutable binding (can't use set! on it) with `name` and `value`.
     template <typename T>
     s7_pointer define_const(std::string_view name, const T &value, std::string_view doc = "")
     {
         return s7_define_constant_with_documentation(sc, name.data(), from(value), doc.data());
     }
 
+    // Defines an immutable binding (can't use set! on it) with `name` and `value`.
     template <typename T>
     s7_pointer define_const(std::string_view name, T &&value, std::string_view doc = "")
     {
@@ -1372,47 +1464,30 @@ public:
 
     Variable operator[](std::string_view name);
 
+    // Gets the value of a variable `name` from the top level and converts it to `T`.
     template <typename T> T get(std::string_view name)        { return to<T>(s7_name_to_value(sc, name.data())); }
+    // Same as `get`, but uses `to_opt` for conversion and therefore returns an std::optional.
     template <typename T> auto get_opt(std::string_view name) { return to_opt<T>(s7_name_to_value(sc, name.data())); }
-
+    // (set! `name` `value`)
     template <typename T> void set(std::string_view name, const T  &value) { s7_symbol_set_value(sc, sym(name.data()), from(value)); }
     template <typename T> void set(std::string_view name,       T &&value) { s7_symbol_set_value(sc, sym(name.data()), from(std::move(value))); }
-
+    // Creates a symbol.
     s7_pointer sym(std::string_view name) { return s7_make_symbol(sc, name.data()); }
 
-    /* calling functions */
-    template <typename... T>
-    s7_pointer call(std::string_view name, T&&... args)
-    {
-        return s7_call(sc, s7_name_to_value(sc, name.data()), list(FWD(args)...).ptr());
-    }
+    // (`name` `args...`)
+    template <typename... T> s7_pointer call(std::string_view name, T&&... args) { return s7_call(sc, s7_name_to_value(sc, name.data()), list(FWD(args)...).ptr()); }
+    template <typename... T> s7_pointer call(Function func,         T&&... args) { return s7_call(sc, func.ptr(), list(FWD(args)...).ptr()); }
 
-    template <typename... T>
-    s7_pointer call(Function func, T&&... args)
-    {
-        return s7_call(sc, func.ptr(), list(FWD(args)...).ptr());
-    }
-
+    // (apply `fn` `list`)
     s7_pointer apply(Function fn, List list)                             { return s7_apply_function(sc, fn.ptr(), list.ptr()); }
-    template <typename T> s7_pointer apply(Function fn, VarArgs<T> args) { return s7_apply_function(sc, fn.ptr(), args.ptr()); }
+    template <typename T> s7_pointer apply(Function fn, VarArgs<T> list) { return s7_apply_function(sc, fn.ptr(), list.ptr()); }
 
-    /* function creation */
-    template <typename F>
-    s7_pointer make_signature(F &&f)
-    {
-        return detail::make_signature(sc, f);
-    }
+    // Creates a signature for a C++ function `f`. Function created with define/make_function
+    // automatically get a signature.
+    template <typename F> s7_pointer make_signature(F &&f) { return detail::make_signature(sc, f); }
 
-    // special case for functions that follow s7's standard signature
-    s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn, FunctionOpts opts = {})
-    {
-        auto _name = s7_string(save_string(name));
-        auto define = opts.unsafe_arglist || opts.unsafe_body
-            ? s7_define_function
-            : s7_define_safe_function;
-        return define(sc, _name, fn, 0, 0, true, doc.data());
-    }
-
+    // Defines a function at the top level with name `name` and with documentation `doc`. Use `opts` to set
+    // whether the function is unsafe in some way (See `FunctionOpts` documentation for details). 
     template <typename F>
     s7_pointer define_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
     {
@@ -1430,6 +1505,17 @@ public:
         }
     }
 
+    // `define_function` special case for functions that follow s7's standard signature
+    s7_pointer define_function(std::string_view name, std::string_view doc, s7_function fn, FunctionOpts opts = {})
+    {
+        auto _name = s7_string(save_string(name));
+        auto define = opts.unsafe_arglist || opts.unsafe_body
+            ? s7_define_function
+            : s7_define_safe_function;
+        return define(sc, _name, fn, 0, 0, true, doc.data());
+    }
+
+    // `define_function` special case for `Overload`.
     template <typename... Fns>
     s7_pointer define_function(std::string_view name, std::string_view doc, Overload<Fns...> &&overload, FunctionOpts opts = {})
     {
@@ -1452,12 +1538,8 @@ public:
         }
     }
 
-    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
-    {
-        auto _name = s7_string(save_string(name));
-        s7_define_function_star(sc, _name, f, arglist_desc.data(), doc.data());
-    }
-
+    // (define* (`name` `arglist_desc` ...) ...). Note that no checks are done
+    // to `arglist_desc` to make sure it follows `func`'s signature.
     template <typename F>
     void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
     {
@@ -1467,11 +1549,15 @@ public:
         s7_define_typed_function_star(sc, _name, f, arglist_desc.data(), doc.data(), sig);
     }
 
-    void define_macro(std::string_view name, std::string_view doc, s7_function f)
+    // `define_star_function` special case for s7_function.
+    void define_star_function(std::string_view name, std::string_view arglist_desc, std::string_view doc, s7_function f)
     {
-        s7_define_macro(sc, s7_string(save_string(name)), f, 0, 0, true, doc.data());
+        auto _name = s7_string(save_string(name));
+        s7_define_function_star(sc, _name, f, arglist_desc.data(), doc.data());
     }
 
+    // Defines a macro. Note that macros are treated the same as normal s7
+    // functions and do not receive special checks.
     template <typename F>
     void define_macro(std::string_view name, std::string_view doc, F &&func)
     {
@@ -1481,25 +1567,54 @@ public:
         s7_define_macro(sc, _name, f, NumArgs, 0, false, doc.data());
     }
 
+    // `define_macro` special case for s7_function.
+    void define_macro(std::string_view name, std::string_view doc, s7_function f)
+    {
+        s7_define_macro(sc, s7_string(save_string(name)), f, 0, 0, true, doc.data());
+    }
+
+    // Creates a function with name `name` and documentation `doc`. Note that it doesn't define it anywhere!
     template <typename F>
     Function make_function(std::string_view name, std::string_view doc, F &&func, FunctionOpts opts = {})
     {
         return detail::make_function(sc, name, doc, std::move(func), opts);
     }
 
+    // Same as `make_function`, but for star functions.
     template <typename F>
     Function make_star_function(s7_scheme *sc, std::string_view name, std::string_view arglist_desc, std::string_view doc, F&& func)
     {
         return detail::make_star_function(sc, name, arglist_desc, doc, std::move(func));
     }
 
-    /* usertypes */
+    // Registers a new usertype.
+    // `name` is the name of the type, used in error messages and names of the
+    // constructor (if no name was provided) and the ? function
+    // (i.e. `name?` checks if an object is a `T`).
+    // `constructors` is an overload of functions that will be used to create a
+    // new instance of the usertype. You can also provide a specific name for
+    // the constructor while creating the Constructors object (otherwise, the
+    // default is `make-name`).
+    // `methods` is an environment where methods for every usertype objects are
+    // defined.
+    // Various operators are automatically registered when creating a new usertype.
+    // These are:
+    // - The GC free operator (which calls delete on the object);
+    // - The GC mark operator (which simply marks the object's let; don't forget
+    //   to mark that when creating a custom mark function);
+    // - The `equal?` operator (created if `T` defines an operator==);
+    // - The `length` operator (created if `T` defines .size());
+    // - Ref and Set operators (created if `T` defines an operator[]);
+    // - The ? function (always created);
+    // One can substitute operators either by using make_usertype like so:
+    //   make_usertype<T>(name, ctors, op, fn, op2, fn2, ...)
+    // or by using usertype_add_op and usertype_add_method_op.
     template <typename T, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, Let methods)
     {
         auto tag = s7_make_c_type(sc, name.data());
         detail::TypeTag<T>::tag.insert_or_assign(reinterpret_cast<uintptr_t>(sc), tag);
-        detail::TypeTag<T>::let.insert_or_assign(reinterpret_cast<uintptr_t>(sc), let);
+        detail::TypeTag<T>::let.insert_or_assign(reinterpret_cast<uintptr_t>(sc), methods.ptr());
 
         auto doc = std::format("(make-{} ...) creates a new {}", name, name);
         auto ctor_name = !constructors.name.empty() ? constructors.name.data() : std::format("make-{}", name).c_str();
@@ -1596,13 +1711,15 @@ public:
     template <typename T, typename... Fns>
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors = {})
     {
-        return make_usertype<T>(name, constructors, s7_inlet(sc, s7_nil(sc)));
+        return make_usertype<T>(name, constructors, new_empty_let());
     }
 
+    // Overload for `make_usertype` that specialize the usertype with a custom `op`.
+    // See `Op`'s documentation for which operators can be defined.
     template <typename T, typename F, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, Op op, F &&fn, auto&&... args)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, Let methods, Op op, F &&fn, auto&&... args)
     {
-        auto tag = make_usertype<T>(name, constructors, let, FWD(args)...);
+        auto tag = make_usertype<T>(name, constructors, methods, FWD(args)...);
         usertype_add_op<T>(name, tag, op, fn);
         return tag;
     }
@@ -1615,36 +1732,42 @@ public:
         return tag;
     }
 
+    // Overload for `make_usertype` that specialize the usertype with a custom,
+    // method-based `op`. See `MethodOp`'s documentation for which operators can be defined.
     template <typename T, typename F, typename... Fns>
     s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, MethodOp op, F &&fn, auto&&... args)
     {
-        auto let = s7_inlet(sc, s7_nil(sc));
-        auto tag = make_usertype<T>(name, constructors, let, FWD(args)...);
-        usertype_add_method_op<T>(name, let, op, fn);
+        auto methods = new_empty_let();
+        auto tag = make_usertype<T>(name, constructors, methods, FWD(args)...);
+        usertype_add_method_op<T>(name, methods, op, fn);
         return tag;
     }
 
     template <typename T, typename F, typename... Fns>
-    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, s7_pointer let, MethodOp op, F &&fn, auto&&... args)
+    s7_int make_usertype(std::string_view name, Constructors<Fns...> constructors, Let methods, MethodOp op, F &&fn, auto&&... args)
     {
-        auto tag = make_usertype<T>(name, constructors, let, FWD(args)...);
-        usertype_add_method_op<T>(name, let, op, fn);
+        auto tag = make_usertype<T>(name, constructors, methods, FWD(args)...);
+        usertype_add_method_op<T>(name, methods, op, fn);
         return tag;
     }
 
+    // Adds an operator to specialize `T`'s behavior.
     template <typename T, typename F>
     void add_op(Op op, F &&fn)
     {
         usertype_add_op(detail::get_type_name<T>(sc), get_type_tag<T>(), op, std::move(fn));
     }
 
+    // Adds a method-based operator to specialize `T`'s behavior.
     template <typename T, typename F>
     void add_method_op(MethodOp op, F &&fn)
     {
         usertype_add_method_op(detail::get_type_name<T>(sc), get_type_let<T>(), op, std::move(fn));
     }
 
-    // also known as dilambda, but that is such a bad name (although technically right)
+    // Defines a property of name `name`. A "property" is a function with a setter, and is
+    // usually used to define usertype getters and setters.
+    // This is known as dilambda in s7, but that is such a bad name (although technically right)...
     template <typename F, typename G>
     void define_property(std::string_view name, std::string_view doc, F &&getter, G &&setter)
     {
@@ -1652,19 +1775,23 @@ public:
         constexpr auto NumArgsG = detail::FunctionTraits<G>::arity;
         auto g = detail::make_s7_function(sc, name.data(), getter);
         auto s = detail::make_s7_function(sc, name.data(), setter);
-        auto gsig = make_signature(getter);
-        auto ssig = make_signature(setter);
-        s7_define_variable(sc, name.data(),
-            s7_typed_dilambda(sc, name.data(), g, NumArgsF, 0,
-                                               s, NumArgsG, 0, doc.data(), gsig, ssig));
+        s7_define_variable(sc, name.data(), s7_typed_dilambda(
+            sc, name.data(), g, NumArgsF, 0, s, NumArgsG, 0,
+            doc.data(), make_signature(getter), make_signature(setter)
+        ));
     }
 
-    /* type related stuff */
+    // Same as (type-of `p`), but will return the C/C++ type's name if `p` is a C-object.
     std::string_view type_of(s7_pointer p) { return detail::type_of(sc, p); }
 
+    // Returns s7's tag for T. Make sure `T` is already registered, or you'll get an error
+    // at runtime!
     template <typename T> s7_int     get_type_tag() { return detail::get_type_tag<T>(sc); }
+
+    // Returns the methods environment for `T`.
     template <typename T> s7_pointer get_type_let() { return detail::get_type_let<T>(sc); }
 
+    // Returns the string representation of `T`. Works for usertypes too.
     template <typename T, bool OutputType = false>
     std::string_view type_to_string()
     {
@@ -1672,51 +1799,69 @@ public:
     }
 
     /* let creation */
+    // Returns the top-level environment. This is where any defines done with `scheme.define*` go.
     Let rootlet() { return Let(sc, s7_rootlet(sc)); }
+    // Returns the current environment. Note that C functions do not have their own environments!
     Let curlet()  { return Let(sc, s7_curlet(sc)); }
+    // Creates a new environment. This environment will be a child of the top-level environment.
     Let new_let() { return Let(sc, s7_sublet(sc, s7_curlet(sc), s7_nil(sc))); }
+    // Creates a new environment as a child of the top-level environment. `bindings` must be a list of pairs.
     Let new_let(List bindings) { return Let(sc, s7_sublet(sc, s7_curlet(sc), bindings.ptr())); }
-    Let new_let_from(Let sub) { return Let(sc, s7_sublet(sc, sub.ptr(), s7_nil(sc))); }
-    Let new_let_from(Let sub, List bindings) { return Let(sc, s7_sublet(sc, sub.ptr(), bindings.ptr())); }
+    // Creates a new environment that is a child of `parent`.
+    Let new_let_from(Let parent) { return Let(sc, s7_sublet(sc, parent.ptr(), s7_nil(sc))); }
+    // Creates a new environment that is a child of `parent`, with `bindings` bindings.
+    Let new_let_from(Let parent, List bindings) { return Let(sc, s7_sublet(sc, parent.ptr(), bindings.ptr())); }
+    // Create a new environment. Unlike `new_let`, this environment has no parents.
     Let new_empty_let() { return Let(sc, s7_inlet(sc, s7_nil(sc))); }
+    // Create a new environment with `bindings` bindings. Unlike `new_let`, this environment has no parents.
     Let new_empty_let(List bindings) { return Let(sc, s7_inlet(sc, bindings.ptr())); }
 
     /* ports */
+    // Opens a file as an input port.
     InputPort  open_file(std::string_view name,  InputMode mode) { return InputPort( sc, s7_open_input_file( sc, name.data(), detail::input_mode_to_string( mode))); }
+    // Opens a file as an output port.
     OutputPort open_file(std::string_view name, OutputMode mode) { return OutputPort(sc, s7_open_output_file(sc, name.data(), detail::output_mode_to_string(mode))); }
+    // Opens a string as an input port.
     InputPort  open_string(std::string_view string) { return InputPort( sc, s7_open_input_string( sc, string.data())); }
+    // Opens a string as an output port.
     OutputPort open_string()                        { return OutputPort(sc, s7_open_output_string(sc)); }
-
+    // Creates a new input port that gets its input by calling `fn`.
+    // `fn` must takes three parameters: s7::Scheme &, InputPort, s7_read_t, which
+    // are, respectively, the interpreter, the port created by `open_input_function`
+    // and an indication of which function was called to read.
+    // `fn` must return an s7_pointer (can be anything).
     InputPort  open_input_function( auto &&fn) { return  InputPort(sc, s7_open_input_function( sc, make_input_fn(std::move(fn)))); }
+    // Creates a new output port that sends its output to `fn`.
+    // `fn` must takes three parameters: s7::Scheme &, OutputPort, uint8_t, which
+    // are, respectively, the interpreter, the port created by `open_input_function`
+    // and the byte to write. `fn` mustn't return anything.
     OutputPort open_output_function(auto &&fn) { return OutputPort(sc, s7_open_output_function(sc, make_output_fn(std::move(fn)))); }
 
     InputPort current_input_port()                         { return InputPort( sc, s7_current_input_port(sc)); }
     InputPort set_current_input_port(InputPort p)          { return InputPort( sc, s7_set_current_input_port(sc, p.ptr())); }
+    // Creates an input port with `open_string` and sets it as the current input port.
     InputPort set_current_input_port(std::string_view str) { return set_current_input_port(open_string(str)); }
+    // Creates an input port with `open_input_function` and sets it as the current input port.
     InputPort set_current_input_port(auto &&fn)            { return set_current_input_port(open_input_function(std::move(fn))); }
     OutputPort current_output_port()                       { return OutputPort(sc, s7_current_output_port(sc)); }
     OutputPort set_current_output_port(OutputPort p)       { return OutputPort(sc, s7_set_current_output_port(sc, p.ptr())); }
+    // Creates an output port with `open_output_function` and sets it as the current output port.
     OutputPort set_current_output_port(auto &&fn)          { return set_current_output_port(open_output_function(std::move(fn))); }
     OutputPort current_error_port()                        { return OutputPort(sc, s7_current_error_port(sc)); }
     OutputPort set_current_error_port(OutputPort p)        { return OutputPort(sc, s7_set_current_error_port(sc, p.ptr())); }
+    // Creates an output port with `open_output_function` and sets it as the current error port.
     OutputPort set_current_error_port(auto &&fn)           { return set_current_error_port(open_output_function(std::move(fn))); }
 
-    /* utilities */
-    s7_pointer save_string(std::string_view s)
-    {
-        return s7_make_semipermanent_string(sc, s.data());
-    }
+    // Creates a semi-permanent copy of `s` inside the interpreter.
+    s7_pointer save_string(std::string_view s) { return s7_make_semipermanent_string(sc, s.data()); }
 
-    s7_pointer make_continuation()
-    {
-        return s7_make_continuation(sc);
-    }
+    // (call/cc)
+    s7_pointer make_continuation() { return s7_make_continuation(sc); }
 
-    s7_pointer set_setter(s7_pointer p, Function setter)
-    {
-        return s7_set_setter(sc, p, setter.ptr());
-    }
+    // Sets the setter for `p`, i.e. a scheme procedure that will be called when using set! on `p`.
+    s7_pointer set_setter(s7_pointer p, Function setter) { return s7_set_setter(sc, p, setter.ptr()); }
 
+    // Checks if `p` has a method called `name` and returns it if found.
     std::optional<Function> find_method(s7_pointer p, std::string_view name)
     {
         auto m = s7_method(sc, p, sym(name.data()));
@@ -1726,6 +1871,7 @@ public:
         return Function(m);
     }
 
+    // Returns the current stacktrace.
     std::string_view stacktrace() { return to_string(s7_stacktrace(sc)); }
 
     // probably worth noting: s7's history is reeeaaaally awkward. it's a circular list, yes, but it goes like this:
@@ -1735,12 +1881,16 @@ public:
     // (maybe i shouldn't provide this stuff if WITH_HISTORY isn't defined...)
     // if you're making a repl (the only reason anyone would use s7's history...), you might as well make your own
     // implementation, it's not that hard (especially if you're using C++).
+
     bool history_enabled() { return s7_history_enabled(sc); }
     bool set_history_enabled(bool enabled) { return s7_set_history_enabled(sc, enabled); }
+    // Returns the history buffer. Note that it is a backwards circular buffer.
     List history() { return List(s7_history(sc)); }
-    s7_pointer add_history(s7_pointer entry) { return s7_add_to_history(sc, entry); }
+    // Adds an entry to the history buffer.
+    s7_pointer add_to_history(s7_pointer entry) { return s7_add_to_history(sc, entry); }
 };
 
+// A utility class used to allow indexing the interpreter or a let to access its variables.
 class Variable {
     Scheme *scheme;
     s7_pointer let;
@@ -1752,8 +1902,19 @@ public:
     template <typename T> Variable & operator=(const T &v) { s7_let_set(scheme->ptr(), let, sym, scheme->from(v));            return *this; }
     template <typename T> Variable & operator=(T &&v)      { s7_let_set(scheme->ptr(), let, sym, scheme->from(std::move(v))); return *this; }
 
+    // Is this variable's value a `T`? (note that using `is` and then `to` with a variable can be slower than using `to_opt`)
+    template <typename T> bool is()     { return scheme->is<T>(s7_let_ref(scheme->ptr(), let, sym)); }
+    // Converts this variable's value to `T` without any checks.
     template <typename T> T to()        { return scheme->to<T>(s7_let_ref(scheme->ptr(), let, sym)); }
+    // Converts this variable's value to `T`, but checks that it is a `T` first. Returns an std::optional.
     template <typename T> auto to_opt() { return scheme->to_opt<T>(s7_let_ref(scheme->ptr(), let, sym)); }
+
+    // Variable's operator[] assumes its value is a Let and indexes it.
+    Variable operator[](std::string_view name)
+    {
+        assert(is<Let>());
+        return to<Let>()[name];
+    }
 };
 
 Variable Scheme::operator[](std::string_view name)
@@ -1775,22 +1936,27 @@ Variable Let::operator[](std::string_view name)
     return Variable(reinterpret_cast<Scheme *>(&sc), let, sym);
 }
 
-struct Equal {
+// Utility class to be used with STL containers. It's a function object that
+// performs comparison for s7_pointer.
+class Equal {
     Scheme *sc;
-
+public:
     explicit Equal(Scheme &s) : sc(&s) {}
 
-    bool operator()(const s7_pointer &a, const s7_pointer &b) const {
+    bool operator()(s7_pointer a, s7_pointer b) const
+    {
         return s7_is_equal(sc->ptr(), a, b);
     }
 };
 
-struct Hash {
+// Utility class to be used with STL containers. It's a function object that
+// performs hashing for s7_pointer.
+class Hash {
     Scheme *sc;
-
+public:
     explicit Hash(Scheme &s) : sc(&s) {}
 
-    size_t operator()(const s7_pointer& p) const
+    size_t operator()(s7_pointer p) const
     {
         return s7_hash_code(sc->ptr(), p, s7_name_to_value(sc->ptr(), "equal?"));
     }
